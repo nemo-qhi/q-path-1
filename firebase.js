@@ -38,6 +38,14 @@ import {
 } from "./firebase.js";
 
 const h = React.createElement;
+const APP_SCREENS = new Set(["home", "profile", "quizzes", "answer", "create", "study", "dashboard", "edit"]);
+
+function getScreenFromHash() {
+  if (typeof window === "undefined") return "home";
+  const value = window.location.hash.replace(/^#/, "");
+  return APP_SCREENS.has(value) ? value : "home";
+}
+
 const STORAGE = {
   quizzes: "qpath.quizzes",
   profile: "qpath.profile",
@@ -231,7 +239,7 @@ function Header({ eyebrow, title, body }) {
 }
 
 function App() {
-  const [screen, setScreen] = useState("home");
+  const [screen, setScreen] = useState(() => getScreenFromHash());
   const [navigationIndex, setNavigationIndex] = useState(0);
   const [quizzes, setQuizzes] = useState(() => read(STORAGE.quizzes, samples));
   const [profile, setProfile] = useState(() => read(STORAGE.profile, { name: "匿名ユーザー", createdCount: 0, solvedCount: 0, challengeCount: 0 }));
@@ -245,7 +253,7 @@ function App() {
   const [firebaseStatus, setFirebaseStatus] = useState("connecting");
   const [quizSessionIds, setQuizSessionIds] = useState([]);
   const [quizSessionPosition, setQuizSessionPosition] = useState(0);
-  const screenRef = useRef("home");
+  const screenRef = useRef(getScreenFromHash());
   const navigationIndexRef = useRef(0);
 
   useEffect(() => { screenRef.current = screen; }, [screen]);
@@ -270,6 +278,30 @@ function App() {
       return changed ? migrated : current;
     });
   }, [membership?.classId]);
+  useEffect(() => {
+    if (!membership?.classId || membership.userId) return;
+    const role = membership.role === "teacher" ? "teacher" : "student";
+    const generatedId = generateUserId(role);
+    const currentName = profile.name || "匿名ユーザー";
+    setMembership((current) => current ? { ...current, userId: generatedId } : current);
+    setClassProfiles((current) => ({
+      ...current,
+      [getProfileKey(membership.classId, generatedId)]: current[getProfileKey(membership.classId, generatedId)] || createProfileForClass({
+        id: generatedId,
+        name: currentName,
+        role,
+      }),
+    }));
+    setClasses((current) => current.map((classroom) => {
+      if (classroom.id !== membership.classId) return classroom;
+      return upsertClassPerson(classroom, {
+        id: generatedId,
+        name: currentName,
+        role,
+        joinedAt: new Date().toISOString(),
+      });
+    }));
+  }, [membership?.classId, membership?.role, membership?.userId, profile.name]);
   useEffect(() => {
     let cancelled = false;
     const unsubscribes = [];
@@ -315,12 +347,15 @@ function App() {
         setNavigationIndex(restoredIndex);
         setScreen(historyState.screen);
       } else {
+        const initialScreen = getScreenFromHash();
+        screenRef.current = initialScreen;
         navigationIndexRef.current = 0;
         setNavigationIndex(0);
+        setScreen(initialScreen);
         window.history.replaceState(
-          { qpath: "app", screen: screenRef.current, index: 0 },
+          { qpath: "app", screen: initialScreen, index: 0 },
           "",
-          `${baseUrl}#${screenRef.current}`
+          `${baseUrl}#${initialScreen}`
         );
       }
     } else {
@@ -350,6 +385,23 @@ function App() {
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
+  }, [membership]);
+  useEffect(() => {
+    const handleHashChange = () => {
+      if (!membership) return;
+      const nextScreen = getScreenFromHash();
+      if (nextScreen === screenRef.current) return;
+      const baseUrl = `${window.location.pathname}${window.location.search}`;
+      screenRef.current = nextScreen;
+      setScreen(nextScreen);
+      window.history.replaceState(
+        { qpath: "app", screen: nextScreen, index: navigationIndexRef.current },
+        "",
+        `${baseUrl}#${nextScreen}`
+      );
+    };
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
   }, [membership]);
 
   const navigateTo = (nextScreen, { replace = false } = {}) => {
@@ -409,6 +461,29 @@ function App() {
   );
   const activeProfileKey = getProfileKey(membership?.classId, membership?.userId);
   const activeClassProfile = activeProfileKey ? classProfiles[activeProfileKey] : null;
+
+  useEffect(() => {
+    if (!membership?.classId || !membership.userId || !activeClass) return;
+    const role = membership.role === "teacher" ? "teacher" : "student";
+    if (findClassPerson(activeClass, membership.userId, role)) return;
+    const person = {
+      id: membership.userId,
+      name: activeClassProfile?.name || profile.name || "匿名ユーザー",
+      role,
+      joinedAt: new Date().toISOString(),
+    };
+    const updatedClassroom = upsertClassPerson(activeClass, person);
+    setClasses((current) => current.map((classroom) => classroom.id === activeClass.id ? updatedClassroom : classroom));
+    saveClass(updatedClassroom).catch(console.error);
+    setClassProfiles((current) => ({
+      ...current,
+      [getProfileKey(activeClass.id, membership.userId)]: current[getProfileKey(activeClass.id, membership.userId)] || createProfileForClass({
+        id: membership.userId,
+        name: person.name,
+        role,
+      }),
+    }));
+  }, [membership?.classId, membership?.role, membership?.userId, activeClass?.id, activeClassProfile?.name, profile.name]);
 
   const updateClassProfile = (updater, targetKey = activeProfileKey) => {
     if (!targetKey) return;
