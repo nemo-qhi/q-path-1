@@ -621,7 +621,8 @@ select:focus {
 
 .profile-edit-card,
 .analytics-card,
-.profile-quiz-card {
+.profile-quiz-card,
+.student-id-card {
   display: grid;
   gap: 14px;
   margin-top: 14px;
@@ -630,6 +631,55 @@ select:focus {
   border-radius: 22px;
   background: #ffffff;
   box-shadow: 0 12px 30px rgba(23, 109, 158, 0.08);
+}
+
+.student-id-note {
+  margin: -7px 0 0;
+  color: #607d90;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.student-id-list {
+  display: grid;
+  gap: 8px;
+}
+
+.student-id-list article {
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border-radius: 15px;
+  background: #f4fbff;
+}
+
+.student-id-avatar {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  border-radius: 14px;
+  font-weight: 900;
+}
+
+.student-id-list strong,
+.student-id-list span {
+  display: block;
+}
+
+.student-id-list strong {
+  color: #173b54;
+}
+
+.student-id-list span {
+  margin-top: 2px;
+  color: #28765b;
+  font-size: 0.82rem;
+  font-weight: 900;
 }
 
 .profile-quiz-list {
@@ -1006,6 +1056,63 @@ select:focus {
   font-size: 0.82rem;
 }
 
+.join-mode-selector {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.join-mode-button {
+  min-height: 92px;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 11px 7px;
+  text-align: center;
+  color: #52778d;
+  border: 1px solid #cdeafa;
+  border-radius: 16px;
+  background: #f7fcff;
+}
+
+.join-mode-button svg {
+  color: #1689cf;
+}
+
+.join-mode-button span,
+.join-mode-button small {
+  max-width: 100%;
+}
+
+.join-mode-button span {
+  color: #173b54;
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.join-mode-button small {
+  color: #698294;
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.join-mode-button.selected {
+  color: #0874b9;
+  border-color: #1597d5;
+  background: #e7f6ff;
+  box-shadow: inset 0 0 0 1px #1597d5;
+}
+
+.join-mode-help {
+  margin: -8px 0 0;
+  text-align: center;
+  color: #668094;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
 .teacher-entry-grid {
   display: grid;
   gap: 10px;
@@ -1039,6 +1146,97 @@ select:focus {
 .entry-option span {
   color: #698294;
   font-size: 0.82rem;
+}
+
+.issued-id-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(23, 59, 84, 0.42);
+}
+
+.issued-id-dialog {
+  width: min(100%, 420px);
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 24px 20px 20px;
+  text-align: center;
+  color: #173b54;
+  border: 1px solid #cdeafa;
+  border-radius: 22px;
+  background: #ffffff;
+  box-shadow: 0 24px 60px rgba(12, 75, 113, 0.24);
+}
+
+.issued-id-icon {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  color: #28765b;
+  border-radius: 18px;
+  background: #e3f8ec;
+}
+
+.issued-id-dialog > span {
+  color: #4c91ba;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.issued-id-dialog h2,
+.issued-id-dialog p {
+  margin: 0;
+}
+
+.issued-id-dialog h2 {
+  font-size: 1.2rem;
+}
+
+.issued-id-dialog p {
+  color: #607d90;
+  font-size: 0.88rem;
+  line-height: 1.65;
+}
+
+.issued-id-value {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 46px;
+  gap: 8px;
+  margin-top: 3px;
+}
+
+.issued-id-value input {
+  min-width: 0;
+  text-align: center;
+  color: #28765b;
+  border-color: #bce9d5;
+  background: #eefaf3;
+  font-size: 1.25rem;
+  font-weight: 900;
+}
+
+.issued-id-value button {
+  display: grid;
+  place-items: center;
+  color: #0874b9;
+  border-radius: 14px;
+  background: #e7f6ff;
+}
+
+.issued-id-status {
+  color: #28765b;
+  font-weight: 800;
+}
+
+.issued-id-dialog .primary-button {
+  width: 100%;
+  margin-top: 3px;
 }
 
 .class-banner {

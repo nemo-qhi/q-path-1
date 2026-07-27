@@ -132,6 +132,12 @@ function findClassPerson(classroom, userId, role) {
   );
 }
 
+function generateUniqueUserId(classroom, role) {
+  let userId = generateUserId(role);
+  while (findClassPerson(classroom, userId)) userId = generateUserId(role);
+  return userId;
+}
+
 function upsertClassPerson(classroom, person) {
   const key = person.role === "teacher" ? "teacherMembers" : "members";
   const list = classroom[key] || [];
@@ -139,6 +145,12 @@ function upsertClassPerson(classroom, person) {
     ? list.map((item) => item.id === person.id ? { ...item, ...person } : item)
     : [...list, person];
   return { ...classroom, [key]: nextList };
+}
+
+function upsertClassroomInList(classrooms, classroom) {
+  return classrooms.some((item) => item.id === classroom.id)
+    ? classrooms.map((item) => item.id === classroom.id ? classroom : item)
+    : [classroom, ...classrooms];
 }
 
 const samples = [
@@ -253,6 +265,7 @@ function App() {
   const [firebaseStatus, setFirebaseStatus] = useState("connecting");
   const [quizSessionIds, setQuizSessionIds] = useState([]);
   const [quizSessionPosition, setQuizSessionPosition] = useState(0);
+  const [issuedIdentity, setIssuedIdentity] = useState(null);
   const screenRef = useRef(getScreenFromHash());
   const navigationIndexRef = useRef(0);
 
@@ -636,6 +649,7 @@ function App() {
     setClasses((current) => [classroom, ...current]);
     await waitForRemoteSave(saveClass(classroom));
     setMembership({ role: "teacher", classId: classroom.id, userId: teacherId });
+    setIssuedIdentity({ userId: teacherId, className: classroom.name });
     setScreen("dashboard");
     screenRef.current = "dashboard";
   };
@@ -646,7 +660,7 @@ function App() {
     if (!classroom) return false;
     const existing = userId ? findClassPerson(classroom, userId, "student") : null;
     if (userId && !existing) return false;
-    const memberId = existing?.id || generateUserId("student");
+    const memberId = existing?.id || generateUniqueUserId(classroom, "student");
     const memberName = existing?.name || nickname;
     setProfile((current) => ({ ...current, name: memberName }));
     const updatedClassroom = upsertClassPerson(classroom, {
@@ -659,12 +673,10 @@ function App() {
       ...current,
       [getProfileKey(classroom.id, memberId)]: current[getProfileKey(classroom.id, memberId)] || createProfileForClass({ id: memberId, name: memberName, role: "student" }),
     }));
-    setClasses((current) => current.map((item) => {
-      if (item.id !== classroom.id) return item;
-      return updatedClassroom;
-    }));
+    setClasses((current) => upsertClassroomInList(current, updatedClassroom));
     await waitForRemoteSave(saveClass(updatedClassroom));
     setMembership({ role: "student", classId: classroom.id, userId: memberId });
+    if (!existing) setIssuedIdentity({ userId: memberId, className: classroom.name });
     setScreen("home");
     screenRef.current = "home";
     return true;
@@ -677,7 +689,7 @@ function App() {
     if ((classroom.password || "") !== password) return false;
     const existing = userId ? findClassPerson(classroom, userId, "teacher") : null;
     if (userId && !existing) return false;
-    const teacherId = existing?.id || generateUserId("teacher");
+    const teacherId = existing?.id || generateUniqueUserId(classroom, "teacher");
     const teacherName = existing?.name || nickname;
     setProfile((current) => ({ ...current, name: teacherName }));
     const teacherNames = classroom.teachers || [classroom.teacher];
@@ -694,15 +706,42 @@ function App() {
       ...current,
       [getProfileKey(classroom.id, teacherId)]: current[getProfileKey(classroom.id, teacherId)] || createProfileForClass({ id: teacherId, name: teacherName, role: "teacher" }),
     }));
-    setClasses((current) => current.map((item) => {
-      if (item.id !== classroom.id) return item;
-      return updatedClassroom;
-    }));
+    setClasses((current) => upsertClassroomInList(current, updatedClassroom));
     await waitForRemoteSave(saveClass(updatedClassroom));
     setMembership({ role: "teacher", classId: classroom.id, userId: teacherId });
+    if (!existing) setIssuedIdentity({ userId: teacherId, className: classroom.name });
     setScreen("dashboard");
     screenRef.current = "dashboard";
     return true;
+  };
+
+  const updateCurrentProfile = (changes) => {
+    const nextName = changes.name?.trim();
+    setProfile((current) => ({
+      ...current,
+      ...changes,
+      name: nextName || current.name,
+    }));
+    updateClassProfile((current) => ({
+      ...current,
+      ...changes,
+      name: nextName || current.name,
+    }));
+
+    if (!nextName || !activeClass || !membership?.userId) return;
+    const role = membership.role === "teacher" ? "teacher" : "student";
+    const existing = findClassPerson(activeClass, membership.userId, role);
+    const updatedClassroom = upsertClassPerson(activeClass, {
+      ...existing,
+      id: membership.userId,
+      name: nextName,
+      role,
+      joinedAt: existing?.joinedAt || new Date().toISOString(),
+    });
+    setClasses((current) => current.map((classroom) =>
+      classroom.id === activeClass.id ? updatedClassroom : classroom
+    ));
+    saveClass(updatedClassroom).catch(console.error);
   };
 
   const resetRole = () => {
@@ -806,14 +845,12 @@ function App() {
           classProfile: activeClassProfile,
           membership,
           activeClass,
+          classProfiles,
           resetRole,
           setScreen: navigateTo,
           ownQuizzes: classQuizzes.filter((quiz) => quiz.authorId === membership.userId),
           editOwnQuiz,
-          updateProfile: (changes) => {
-            setProfile((current) => ({ ...current, ...changes, name: changes.name || current.name }));
-            updateClassProfile((current) => ({ ...current, ...changes }));
-          },
+          updateProfile: updateCurrentProfile,
         }),
         screen === "dashboard" && membership.role === "teacher" && h(TeacherDashboard, {
           activeClass,
@@ -823,6 +860,10 @@ function App() {
         })
       )
     ),
+    issuedIdentity && h(IssuedUserIdNotice, {
+      identity: issuedIdentity,
+      onClose: () => setIssuedIdentity(null),
+    }),
     h(BottomNav, { current: screen, setScreen: navigateTo })
   );
 }
@@ -849,11 +890,22 @@ function RoleSetup({ createClass, joinClass, joinClassAsTeacher }) {
 
   const submitJoin = async (event) => {
     event.preventDefault();
+    if (returning === null) {
+      setError("「はじめて入る」か「入ったことがある」を選んでください。");
+      return;
+    }
+    if (returning && userId.length !== 7) {
+      setError(`利用者IDを確認してください。例：${role === "teacher" ? "T-ABCDE" : "S-ABCDE"}`);
+      return;
+    }
     const joined = role === "teacher"
       ? await joinClassAsTeacher({ code: joinCode, nickname: nickname.trim(), userId, password: classPassword })
       : await joinClass({ code: joinCode, nickname: nickname.trim(), userId });
     if (!joined) {
-      setError("クラスが見つかりません。コードをもう一度確認してください。");
+      const details = role === "teacher"
+        ? "クラスコード、利用者ID、先生用パスワード"
+        : returning ? "クラスコードと利用者ID" : "クラスコード";
+      setError(`${details}をもう一度確認してください。`);
     }
   };
 
@@ -881,7 +933,10 @@ function RoleSetup({ createClass, joinClass, joinClassAsTeacher }) {
       className: "role-form",
       onSubmit: (event) => {
         event.preventDefault();
-        if (nickname.trim()) setStep(role === "teacher" ? "teacher-choice" : "join-choice");
+        if (nickname.trim()) {
+          setReturning(null);
+          setStep(role === "teacher" ? "teacher-choice" : "class");
+        }
       },
     },
       h("button", {
@@ -943,53 +998,15 @@ function RoleSetup({ createClass, joinClass, joinClassAsTeacher }) {
           className: "entry-option",
           onClick: () => {
             setTeacherAction("join");
-            setStep("join-choice");
+            setReturning(null);
+            setUserId("");
+            setClassPassword("");
+            setStep("class");
           },
         },
           h(KeyRound, { size: 23 }),
           h("strong", null, "コードでクラスに入る"),
           h("span", null, "共同教員として参加します")
-        )
-      )
-    ),
-    step === "join-choice" && h("div", { className: "role-form" },
-      h("button", {
-        type: "button",
-        className: "text-button",
-        onClick: () => setStep(role === "teacher" ? "teacher-choice" : "nickname"),
-      }, role === "teacher" ? "入り方の選択に戻る" : "ニックネーム設定に戻る"),
-      h("div", { className: "role-heading" },
-        h("div", { className: `role-icon ${role}` }, h(KeyRound, { size: 26 })),
-        h("div", null,
-          h("strong", null, "このクラスは初めてですか？"),
-          h("span", null, "一度入ったクラスなら、利用者IDで同じプロフィールを使えます。")
-        )
-      ),
-      h("div", { className: "teacher-entry-grid" },
-        h("button", {
-          type: "button",
-          className: "entry-option",
-          onClick: () => {
-            setReturning(true);
-            setStep("class");
-          },
-        },
-          h(KeyRound, { size: 23 }),
-          h("strong", null, "入ったことがある"),
-          h("span", null, "利用者IDとクラスコードで入室します")
-        ),
-        h("button", {
-          type: "button",
-          className: "entry-option",
-          onClick: () => {
-            setReturning(false);
-            setUserId("");
-            setStep("class");
-          },
-        },
-          h(Plus, { size: 23 }),
-          h("strong", null, "はじめて入る"),
-          h("span", null, "新しい利用者IDを発行します")
         )
       )
     ),
@@ -1029,26 +1046,45 @@ function RoleSetup({ createClass, joinClass, joinClassAsTeacher }) {
       h("button", {
         type: "button",
         className: "text-button",
-        onClick: () => setStep("join-choice"),
+        onClick: () => setStep(role === "teacher" ? "teacher-choice" : "nickname"),
       }, role === "teacher" ? "入り方の選択に戻る" : "ニックネーム設定に戻る"),
       h("div", { className: "role-heading" },
         h("div", { className: `role-icon ${role}` }, h(KeyRound, { size: 26 })),
         h("div", null,
           h("strong", null, role === "teacher" ? "教員としてクラスに参加" : "クラスに参加"),
-          h("span", null, "共有された6文字のコードを入力")
+          h("span", null, "参加方法を選び、共有されたコードを入力します")
         )
       ),
-      returning && field("利用者ID", h("input", {
-        className: "code-input",
-        value: userId,
-        onChange: (event) => {
-          setUserId(event.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 7));
-          setError("");
+      h("div", { className: "join-mode-selector", "aria-label": "クラスへの参加方法" },
+        h("button", {
+          type: "button",
+          className: `join-mode-button ${returning === false ? "selected" : ""}`,
+          "aria-pressed": returning === false,
+          onClick: () => {
+            setReturning(false);
+            setUserId("");
+            setError("");
+          },
         },
-        placeholder: role === "teacher" ? "T-ABCDE" : "S-ABCDE",
-        maxLength: 7,
-        autoCapitalize: "characters",
-      })),
+          h(Plus, { size: 20 }),
+          h("span", null, "はじめて入る"),
+          h("small", null, "利用者IDを新しく発行")
+        ),
+        h("button", {
+          type: "button",
+          className: `join-mode-button ${returning === true ? "selected" : ""}`,
+          "aria-pressed": returning === true,
+          onClick: () => {
+            setReturning(true);
+            setError("");
+          },
+        },
+          h(KeyRound, { size: 20 }),
+          h("span", null, "入ったことがある"),
+          h("small", null, "以前の利用者IDで入室")
+        )
+      ),
+      returning === null && h("p", { className: "join-mode-help" }, "まず、どちらかを選んでください。"),
       field("クラスコード", h("input", {
         className: "code-input",
         value: joinCode,
@@ -1058,6 +1094,18 @@ function RoleSetup({ createClass, joinClass, joinClassAsTeacher }) {
         },
         placeholder: "ABC234",
         maxLength: 6,
+        autoCapitalize: "characters",
+        required: true,
+      })),
+      returning && field("利用者ID", h("input", {
+        className: "code-input",
+        value: userId,
+        onChange: (event) => {
+          setUserId(event.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 7));
+          setError("");
+        },
+        placeholder: role === "teacher" ? "T-ABCDE" : "S-ABCDE",
+        maxLength: 7,
         autoCapitalize: "characters",
         required: true,
       })),
@@ -1072,9 +1120,82 @@ function RoleSetup({ createClass, joinClass, joinClassAsTeacher }) {
         required: true,
       })),
       error && h("p", { className: "form-error" }, error),
-      h("button", { className: "primary-button", type: "submit", disabled: joinCode.length !== 6 || (role === "teacher" && !classPassword) },
+      h("button", {
+        className: "primary-button",
+        type: "submit",
+        disabled:
+          returning === null ||
+          joinCode.length !== 6 ||
+          (returning && userId.length !== 7) ||
+          (role === "teacher" && !classPassword),
+      },
         role === "teacher" ? "教員として参加" : "クラスに参加"
       )
+    )
+  );
+}
+
+function IssuedUserIdNotice({ identity, onClose }) {
+  const [copyStatus, setCopyStatus] = useState("");
+  const idInputRef = useRef(null);
+
+  const copyUserId = () => {
+    const input = idInputRef.current;
+    let copied = false;
+    if (input) {
+      input.focus();
+      input.select();
+      input.setSelectionRange(0, input.value.length);
+      try {
+        copied = document.execCommand("copy");
+      } catch {
+        copied = false;
+      }
+    }
+
+    const finish = (succeeded) => {
+      setCopyStatus(succeeded ? "コピーしました" : "IDを選択しました。コピーしてください");
+    };
+
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(identity.userId)
+          .then(() => finish(true))
+          .catch(() => finish(copied));
+        return;
+      }
+    } catch {}
+    finish(copied);
+  };
+
+  return h("div", { className: "issued-id-overlay" },
+    h("section", {
+      className: "issued-id-dialog",
+      role: "dialog",
+      "aria-modal": "true",
+      "aria-labelledby": "issued-id-title",
+    },
+      h("div", { className: "issued-id-icon" }, h(CheckCircle2, { size: 30 })),
+      h("span", null, identity.className),
+      h("h2", { id: "issued-id-title" }, "利用者IDを発行しました"),
+      h("p", null, "次にこのクラスへ入るときに使います。忘れないように控えてください。"),
+      h("div", { className: "issued-id-value" },
+        h("input", {
+          ref: idInputRef,
+          value: identity.userId,
+          readOnly: true,
+          "aria-label": "発行された利用者ID",
+          onClick: (event) => event.currentTarget.select(),
+        }),
+        h("button", {
+          type: "button",
+          onClick: copyUserId,
+          title: "利用者IDをコピー",
+          "aria-label": "利用者IDをコピー",
+        }, copyStatus === "コピーしました" ? h(CheckCircle2, { size: 20 }) : h(Clipboard, { size: 20 }))
+      ),
+      copyStatus && h("small", { className: "issued-id-status", role: "status" }, copyStatus),
+      h("button", { type: "button", className: "primary-button", onClick: onClose }, "確認しました")
     )
   );
 }
@@ -1514,9 +1635,10 @@ function SubjectBars({ title, answered, correct }) {
   );
 }
 
-function ProfileScreen({ profile, classProfile, membership, activeClass, resetRole, setScreen, ownQuizzes, editOwnQuiz, updateProfile }) {
+function ProfileScreen({ profile, classProfile, membership, activeClass, classProfiles, resetRole, setScreen, ownQuizzes, editOwnQuiz, updateProfile }) {
   const roleLabel = membership.role === "teacher" ? "教員" : "生徒";
   const displayProfile = classProfile || profile;
+  const studentMembers = membership.role === "teacher" ? (activeClass?.members || []) : [];
   const [draftName, setDraftName] = useState(displayProfile.name || profile.name);
   const [draftBio, setDraftBio] = useState(normalizeBio(displayProfile.bio));
   const [savedNote, setSavedNote] = useState("");
@@ -1571,6 +1693,38 @@ function ProfileScreen({ profile, classProfile, membership, activeClass, resetRo
       h("button", { className: "secondary-button", type: "submit" }, "プロフィールを保存")
     ),
     h(ClassBanner, { membership, activeClass, setScreen }),
+    membership.role === "teacher" && h("section", { className: "student-id-card" },
+      h("div", { className: "section-title-row" },
+        h("div", null,
+          h("span", null, "Student IDs"),
+          h("h2", null, "生徒の名前と利用者ID")
+        ),
+        h("strong", null, `${studentMembers.length}人`)
+      ),
+      h("p", { className: "student-id-note" }, "生徒が利用者IDを忘れたときに、ここから確認できます。"),
+      studentMembers.length
+        ? h("div", { className: "student-id-list" },
+            studentMembers.map((student) => {
+              const studentProfile = classProfiles[getProfileKey(activeClass.id, student.id)];
+              const studentName = studentProfile?.name || student.name || "匿名ユーザー";
+              return h("article", { key: student.id },
+                h("div", {
+                  className: "student-id-avatar",
+                  style: { background: studentProfile?.avatarColor || pickAvatarColor(student.id) },
+                }, studentName.slice(0, 1)),
+                h("div", null,
+                  h("strong", null, studentName),
+                  h("span", null, student.id)
+                )
+              );
+            })
+          )
+        : h("div", { className: "empty-dashboard" },
+            h(Users, { size: 24 }),
+            h("strong", null, "参加済みの生徒はまだいません"),
+            h("p", null, "生徒が初めて入室すると、名前と利用者IDが表示されます。")
+          )
+    ),
     h("div", { className: "stats-grid" },
       h(Stat, { label: "作成したクイズ数", value: displayProfile.createdCount || 0, icon: Edit3 }),
       h(Stat, { label: "解いたクイズ数", value: displayProfile.solvedCount || 0, icon: BookOpen }),
