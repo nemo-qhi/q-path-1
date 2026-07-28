@@ -38,13 +38,34 @@ import {
 } from "./firebase.js";
 
 const h = React.createElement;
+const APP_SCREENS = new Set(["role", "home", "profile", "quizzes", "answer", "create", "study", "dashboard", "edit"]);
+
+function getScreenFromHash() {
+  if (typeof window === "undefined") return "home";
+  const value = window.location.hash.replace(/^#/, "");
+  return APP_SCREENS.has(value) ? value : "home";
+}
+
 const STORAGE = {
   quizzes: "qpath.quizzes",
   profile: "qpath.profile",
   comments: "qpath.comments",
   membership: "qpath.membership",
   classes: "qpath.classes",
+  classProfiles: "qpath.classProfiles",
 };
+
+const AVATAR_COLORS = ["#38aee0", "#62cfbd", "#7aa7ff", "#f59fb3", "#f2b84b", "#8ec96d"];
+const DEFAULT_BIO_TEXT = "挑戦したことが学びです";
+
+function pickAvatarColor(id = "") {
+  const total = Array.from(id).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return AVATAR_COLORS[total % AVATAR_COLORS.length];
+}
+
+function normalizeBio(bio) {
+  return bio && bio !== DEFAULT_BIO_TEXT ? bio : "";
+}
 
 const SUBJECT_OPTIONS = ["国語", "数学", "化学", "生物", "物理", "地学", "日本史", "世界史", "公民", "地理", "英語", "その他"];
 const SUBJECT_ORDER = new Map(SUBJECT_OPTIONS.map((subject, index) => [subject, index]));
@@ -66,6 +87,70 @@ function getSubjectGroups(quizzes) {
 function generateClassCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   return Array.from({ length: 6 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
+}
+
+function generateUserId(role) {
+  const prefix = role === "teacher" ? "T" : "S";
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const body = Array.from({ length: 5 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
+  return `${prefix}-${body}`;
+}
+
+function createProfileForClass({ id, name, role }) {
+  return {
+    id,
+    name: name || "匿名ユーザー",
+    bio: "",
+    avatarColor: pickAvatarColor(id),
+    role,
+    createdCount: 0,
+    solvedCount: 0,
+    challengeCount: 0,
+    correctCount: 0,
+    answeredBySubject: {},
+    correctBySubject: {},
+    createdBySubject: {},
+    solvedCreatedCount: 0,
+  };
+}
+
+function getProfileKey(classId, userId) {
+  return classId && userId ? `${classId}:${userId}` : "";
+}
+
+function getClassroomPeople(classroom) {
+  return [
+    ...(classroom?.members || []).map((person) => ({ ...person, role: "student" })),
+    ...(classroom?.teacherMembers || []).map((person) => ({ ...person, role: "teacher" })),
+  ];
+}
+
+function findClassPerson(classroom, userId, role) {
+  const normalized = userId.trim().toUpperCase();
+  return getClassroomPeople(classroom).find((person) =>
+    person.id === normalized && (!role || person.role === role)
+  );
+}
+
+function generateUniqueUserId(classroom, role) {
+  let userId = generateUserId(role);
+  while (findClassPerson(classroom, userId)) userId = generateUserId(role);
+  return userId;
+}
+
+function upsertClassPerson(classroom, person) {
+  const key = person.role === "teacher" ? "teacherMembers" : "members";
+  const list = classroom[key] || [];
+  const nextList = list.some((item) => item.id === person.id)
+    ? list.map((item) => item.id === person.id ? { ...item, ...person } : item)
+    : [...list, person];
+  return { ...classroom, [key]: nextList };
+}
+
+function upsertClassroomInList(classrooms, classroom) {
+  return classrooms.some((item) => item.id === classroom.id)
+    ? classrooms.map((item) => item.id === classroom.id ? classroom : item)
+    : [classroom, ...classrooms];
 }
 
 const samples = [
@@ -166,24 +251,30 @@ function Header({ eyebrow, title, body }) {
 }
 
 function App() {
-  const [screen, setScreen] = useState("home");
+  const [screen, setScreen] = useState(() => getScreenFromHash());
   const [navigationIndex, setNavigationIndex] = useState(0);
   const [quizzes, setQuizzes] = useState(() => read(STORAGE.quizzes, samples));
   const [profile, setProfile] = useState(() => read(STORAGE.profile, { name: "匿名ユーザー", createdCount: 0, solvedCount: 0, challengeCount: 0 }));
+  const [classProfiles, setClassProfiles] = useState(() => read(STORAGE.classProfiles, {}));
   const [comments, setComments] = useState(() => read(STORAGE.comments, sampleComments));
   const [classes, setClasses] = useState(() => read(STORAGE.classes, []));
-  const [membership, setMembership] = useState(() => read(STORAGE.membership, null));
+  const [membership, setMembership] = useState(() =>
+    getScreenFromHash() === "role" ? null : read(STORAGE.membership, null)
+  );
   const [activeQuizId, setActiveQuizId] = useState(samples[0].id);
+  const [activeEditQuizId, setActiveEditQuizId] = useState("");
   const [message, setMessage] = useState("");
   const [firebaseStatus, setFirebaseStatus] = useState("connecting");
   const [quizSessionIds, setQuizSessionIds] = useState([]);
   const [quizSessionPosition, setQuizSessionPosition] = useState(0);
-  const screenRef = useRef("home");
+  const [issuedIdentity, setIssuedIdentity] = useState(null);
+  const screenRef = useRef(getScreenFromHash());
   const navigationIndexRef = useRef(0);
 
   useEffect(() => { screenRef.current = screen; }, [screen]);
   useEffect(() => localStorage.setItem(STORAGE.quizzes, JSON.stringify(quizzes)), [quizzes]);
   useEffect(() => localStorage.setItem(STORAGE.profile, JSON.stringify(profile)), [profile]);
+  useEffect(() => localStorage.setItem(STORAGE.classProfiles, JSON.stringify(classProfiles)), [classProfiles]);
   useEffect(() => localStorage.setItem(STORAGE.comments, JSON.stringify(comments)), [comments]);
   useEffect(() => localStorage.setItem(STORAGE.classes, JSON.stringify(classes)), [classes]);
   useEffect(() => {
@@ -202,6 +293,30 @@ function App() {
       return changed ? migrated : current;
     });
   }, [membership?.classId]);
+  useEffect(() => {
+    if (!membership?.classId || membership.userId) return;
+    const role = membership.role === "teacher" ? "teacher" : "student";
+    const generatedId = generateUserId(role);
+    const currentName = profile.name || "匿名ユーザー";
+    setMembership((current) => current ? { ...current, userId: generatedId } : current);
+    setClassProfiles((current) => ({
+      ...current,
+      [getProfileKey(membership.classId, generatedId)]: current[getProfileKey(membership.classId, generatedId)] || createProfileForClass({
+        id: generatedId,
+        name: currentName,
+        role,
+      }),
+    }));
+    setClasses((current) => current.map((classroom) => {
+      if (classroom.id !== membership.classId) return classroom;
+      return upsertClassPerson(classroom, {
+        id: generatedId,
+        name: currentName,
+        role,
+        joinedAt: new Date().toISOString(),
+      });
+    }));
+  }, [membership?.classId, membership?.role, membership?.userId, profile.name]);
   useEffect(() => {
     let cancelled = false;
     const unsubscribes = [];
@@ -247,12 +362,15 @@ function App() {
         setNavigationIndex(restoredIndex);
         setScreen(historyState.screen);
       } else {
+        const initialScreen = getScreenFromHash();
+        screenRef.current = initialScreen;
         navigationIndexRef.current = 0;
         setNavigationIndex(0);
+        setScreen(initialScreen);
         window.history.replaceState(
-          { qpath: "app", screen: screenRef.current, index: 0 },
+          { qpath: "app", screen: initialScreen, index: 0 },
           "",
-          `${baseUrl}#${screenRef.current}`
+          `${baseUrl}#${initialScreen}`
         );
       }
     } else {
@@ -283,6 +401,31 @@ function App() {
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, [membership]);
+  useEffect(() => {
+    const handleHashChange = () => {
+      if (!membership) return;
+      const nextScreen = getScreenFromHash();
+      if (nextScreen === "role") {
+        setMembership(null);
+        setScreen("role");
+        screenRef.current = "role";
+        navigationIndexRef.current = 0;
+        setNavigationIndex(0);
+        return;
+      }
+      if (nextScreen === screenRef.current) return;
+      const baseUrl = `${window.location.pathname}${window.location.search}`;
+      screenRef.current = nextScreen;
+      setScreen(nextScreen);
+      window.history.replaceState(
+        { qpath: "app", screen: nextScreen, index: navigationIndexRef.current },
+        "",
+        `${baseUrl}#${nextScreen}`
+      );
+    };
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, [membership]);
 
   const navigateTo = (nextScreen, { replace = false } = {}) => {
     if (!nextScreen) return;
@@ -312,6 +455,19 @@ function App() {
     navigateTo("home", { replace: true });
   };
 
+  const enterAppScreen = (nextScreen) => {
+    const baseUrl = `${window.location.pathname}${window.location.search}`;
+    setScreen(nextScreen);
+    screenRef.current = nextScreen;
+    navigationIndexRef.current = 0;
+    setNavigationIndex(0);
+    window.history.replaceState(
+      { qpath: "app", screen: nextScreen, index: 0 },
+      "",
+      `${baseUrl}#${nextScreen}`
+    );
+  };
+
   const classQuizzes = useMemo(
     () => membership?.classId ? quizzes.filter((quiz) => belongsToClass(quiz, membership.classId)) : [],
     [quizzes, membership?.classId]
@@ -324,6 +480,10 @@ function App() {
     () => classQuizzes.find((quiz) => quiz.id === activeQuizId) || null,
     [activeQuizId, classQuizzes]
   );
+  const activeEditQuiz = useMemo(
+    () => classQuizzes.find((quiz) => quiz.id === activeEditQuizId) || null,
+    [activeEditQuizId, classQuizzes]
+  );
   const quizProgress = quizSessionIds[quizSessionPosition] === activeQuizId
     ? {
         current: quizSessionPosition + 1,
@@ -335,6 +495,44 @@ function App() {
     () => classes.find((classroom) => classroom.id === membership?.classId) || null,
     [classes, membership]
   );
+  const activeProfileKey = getProfileKey(membership?.classId, membership?.userId);
+  const activeClassProfile = activeProfileKey ? classProfiles[activeProfileKey] : null;
+
+  useEffect(() => {
+    if (!membership?.classId || !membership.userId || !activeClass) return;
+    const role = membership.role === "teacher" ? "teacher" : "student";
+    if (findClassPerson(activeClass, membership.userId, role)) return;
+    const person = {
+      id: membership.userId,
+      name: activeClassProfile?.name || profile.name || "匿名ユーザー",
+      role,
+      joinedAt: new Date().toISOString(),
+    };
+    const updatedClassroom = upsertClassPerson(activeClass, person);
+    setClasses((current) => current.map((classroom) => classroom.id === activeClass.id ? updatedClassroom : classroom));
+    saveClass(updatedClassroom).catch(console.error);
+    setClassProfiles((current) => ({
+      ...current,
+      [getProfileKey(activeClass.id, membership.userId)]: current[getProfileKey(activeClass.id, membership.userId)] || createProfileForClass({
+        id: membership.userId,
+        name: person.name,
+        role,
+      }),
+    }));
+  }, [membership?.classId, membership?.role, membership?.userId, activeClass?.id, activeClassProfile?.name, profile.name]);
+
+  const updateClassProfile = (updater, targetKey = activeProfileKey) => {
+    if (!targetKey) return;
+    setClassProfiles((current) => {
+      const fallbackUserId = targetKey.split(":")[1] || membership?.userId;
+      const base = current[targetKey] || createProfileForClass({
+        id: fallbackUserId,
+        name: profile.name,
+        role: membership?.role,
+      });
+      return { ...current, [targetKey]: updater(base) };
+    });
+  };
   const openQuiz = (id, quizPool = classQuizzes) => {
     const sessionQuizzes = quizPool.length ? quizPool : classQuizzes;
     const startIndex = sessionQuizzes.findIndex((quiz) => quiz.id === id);
@@ -363,10 +561,31 @@ function App() {
     setQuizSessionPosition(0);
     navigateTo("home");
   };
-  const recordAnswer = (id) => {
-    setQuizzes((list) => list.map((quiz) => quiz.id === id ? { ...quiz, solvedCount: quiz.solvedCount + 1 } : quiz));
+  const recordAnswer = (quiz, isCorrect) => {
+    setQuizzes((list) => list.map((item) => item.id === quiz.id ? { ...item, solvedCount: item.solvedCount + 1 } : item));
     setProfile((current) => ({ ...current, solvedCount: current.solvedCount + 1, challengeCount: current.challengeCount + 1 }));
-    if (!id.startsWith("sample-")) increaseQuizSolvedCount(id).catch(console.error);
+    updateClassProfile((current) => {
+      const subject = quiz.subject || "その他";
+      const answeredBySubject = { ...(current.answeredBySubject || {}) };
+      const correctBySubject = { ...(current.correctBySubject || {}) };
+      answeredBySubject[subject] = (answeredBySubject[subject] || 0) + 1;
+      if (isCorrect) correctBySubject[subject] = (correctBySubject[subject] || 0) + 1;
+      return {
+        ...current,
+        solvedCount: (current.solvedCount || 0) + 1,
+        challengeCount: (current.challengeCount || 0) + 1,
+        correctCount: (current.correctCount || 0) + (isCorrect ? 1 : 0),
+        answeredBySubject,
+        correctBySubject,
+      };
+    });
+    if (quiz.classId && quiz.authorId) {
+      updateClassProfile((current) => ({
+        ...current,
+        solvedCreatedCount: (current.solvedCreatedCount || 0) + 1,
+      }), getProfileKey(quiz.classId, quiz.authorId));
+    }
+    if (!quiz.id.startsWith("sample-")) increaseQuizSolvedCount(quiz.id).catch(console.error);
   };
   const createQuiz = async (form) => {
     const quiz = {
@@ -378,7 +597,8 @@ function App() {
       correctAnswer: form.correctAnswer,
       explanation: form.explanation.trim(),
       difficulty: form.difficulty,
-      author: profile.name,
+      author: activeClassProfile?.name || profile.name,
+      authorId: membership.userId,
       classId: membership.classId,
       solvedCount: 0,
       likes: 0,
@@ -386,77 +606,168 @@ function App() {
     setQuizzes((list) => [quiz, ...list]);
     await waitForRemoteSave(saveQuiz(quiz));
     setProfile((current) => ({ ...current, createdCount: current.createdCount + 1 }));
+    updateClassProfile((current) => {
+      const subject = quiz.subject || "その他";
+      const createdBySubject = { ...(current.createdBySubject || {}) };
+      createdBySubject[subject] = (createdBySubject[subject] || 0) + 1;
+      return {
+        ...current,
+        createdCount: (current.createdCount || 0) + 1,
+        createdBySubject,
+      };
+    });
     setMessage("作問も大切な学びです！");
     setActiveQuizId(quiz.id);
     navigateTo("quizzes");
   };
 
-  const createClass = async ({ name, code, nickname }) => {
+  const editOwnQuiz = (quizId) => {
+    const quiz = classQuizzes.find((item) => item.id === quizId);
+    if (!quiz || quiz.authorId !== membership.userId) return;
+    setActiveEditQuizId(quizId);
+    navigateTo("edit");
+  };
+
+  const updateQuiz = async (form) => {
+    const currentQuiz = classQuizzes.find((item) => item.id === activeEditQuizId);
+    if (!currentQuiz || currentQuiz.authorId !== membership.userId) return false;
+    const updatedQuiz = {
+      ...currentQuiz,
+      title: form.title.trim(),
+      subject: form.subject.trim(),
+      question: form.question.trim(),
+      choices: form.choices.map((choice) => choice.trim()),
+      correctAnswer: form.correctAnswer,
+      explanation: form.explanation.trim(),
+      difficulty: form.difficulty,
+      author: activeClassProfile?.name || profile.name,
+      updatedAt: new Date().toISOString(),
+    };
+    setQuizzes((list) => list.map((quiz) => quiz.id === updatedQuiz.id ? updatedQuiz : quiz));
+    await waitForRemoteSave(saveQuiz(updatedQuiz));
+    setMessage("クイズを更新しました。作問も大切な学びです。");
+    setActiveEditQuizId("");
+    navigateTo("profile");
+    return true;
+  };
+
+  const createClass = async ({ name, code, nickname, password }) => {
+    const teacherId = generateUserId("teacher");
     const classroom = {
       id: `class-${Date.now()}`,
       name: name.trim() || "新しいクラス",
       code,
+      password,
       teacher: nickname,
       teachers: [nickname],
+      teacherMembers: [{ id: teacherId, name: nickname, joinedAt: new Date().toISOString() }],
       members: [],
       createdAt: new Date().toISOString(),
     };
     setProfile((current) => ({ ...current, name: nickname }));
+    setClassProfiles((current) => ({
+      ...current,
+      [getProfileKey(classroom.id, teacherId)]: createProfileForClass({ id: teacherId, name: nickname, role: "teacher" }),
+    }));
     setClasses((current) => [classroom, ...current]);
     await waitForRemoteSave(saveClass(classroom));
-    setMembership({ role: "teacher", classId: classroom.id });
-    setScreen("dashboard");
-    screenRef.current = "dashboard";
+    setMembership({ role: "teacher", classId: classroom.id, userId: teacherId });
+    setIssuedIdentity({ userId: teacherId, className: classroom.name });
+    enterAppScreen("dashboard");
   };
 
-  const joinClass = async (code, nickname) => {
+  const joinClass = async ({ code, nickname, userId }) => {
     const normalized = code.trim().toUpperCase();
     const classroom = classes.find((item) => item.code === normalized) || await findClassByCode(normalized);
     if (!classroom) return false;
-    setProfile((current) => ({ ...current, name: nickname }));
-    const updatedClassroom = {
-      ...classroom,
-      members: (classroom.members || []).some((member) => member.name === nickname)
-        ? (classroom.members || [])
-        : [...(classroom.members || []), { id: `member-${Date.now()}`, name: nickname, joinedAt: new Date().toISOString() }],
-    };
-    setClasses((current) => current.map((item) => {
-      if (item.id !== classroom.id) return item;
-      return updatedClassroom;
+    const existing = userId ? findClassPerson(classroom, userId, "student") : null;
+    if (userId && !existing) return false;
+    const memberId = existing?.id || generateUniqueUserId(classroom, "student");
+    const memberName = existing?.name || nickname;
+    setProfile((current) => ({ ...current, name: memberName }));
+    const updatedClassroom = upsertClassPerson(classroom, {
+      id: memberId,
+      name: memberName,
+      role: "student",
+      joinedAt: existing?.joinedAt || new Date().toISOString(),
+    });
+    setClassProfiles((current) => ({
+      ...current,
+      [getProfileKey(classroom.id, memberId)]: current[getProfileKey(classroom.id, memberId)] || createProfileForClass({ id: memberId, name: memberName, role: "student" }),
     }));
+    setClasses((current) => upsertClassroomInList(current, updatedClassroom));
     await waitForRemoteSave(saveClass(updatedClassroom));
-    setMembership({ role: "student", classId: classroom.id });
-    setScreen("home");
-    screenRef.current = "home";
+    setMembership({ role: "student", classId: classroom.id, userId: memberId });
+    if (!existing) setIssuedIdentity({ userId: memberId, className: classroom.name });
+    enterAppScreen("home");
     return true;
   };
 
-  const joinClassAsTeacher = async (code, nickname) => {
+  const joinClassAsTeacher = async ({ code, nickname, userId, password }) => {
     const normalized = code.trim().toUpperCase();
     const classroom = classes.find((item) => item.code === normalized) || await findClassByCode(normalized);
     if (!classroom) return false;
-    setProfile((current) => ({ ...current, name: nickname }));
-    const updatedClassroom = {
+    if ((classroom.password || "") !== password) return false;
+    const existing = userId ? findClassPerson(classroom, userId, "teacher") : null;
+    if (userId && !existing) return false;
+    const teacherId = existing?.id || generateUniqueUserId(classroom, "teacher");
+    const teacherName = existing?.name || nickname;
+    setProfile((current) => ({ ...current, name: teacherName }));
+    const teacherNames = classroom.teachers || [classroom.teacher];
+    const updatedClassroom = upsertClassPerson({
       ...classroom,
-      teachers: (classroom.teachers || [classroom.teacher]).includes(nickname)
-        ? (classroom.teachers || [classroom.teacher])
-        : [...(classroom.teachers || [classroom.teacher]), nickname],
-    };
-    setClasses((current) => current.map((item) => {
-      if (item.id !== classroom.id) return item;
-      return updatedClassroom;
+      teachers: teacherNames.includes(teacherName) ? teacherNames : [...teacherNames, teacherName],
+    }, {
+      id: teacherId,
+      name: teacherName,
+      role: "teacher",
+      joinedAt: existing?.joinedAt || new Date().toISOString(),
+    });
+    setClassProfiles((current) => ({
+      ...current,
+      [getProfileKey(classroom.id, teacherId)]: current[getProfileKey(classroom.id, teacherId)] || createProfileForClass({ id: teacherId, name: teacherName, role: "teacher" }),
     }));
+    setClasses((current) => upsertClassroomInList(current, updatedClassroom));
     await waitForRemoteSave(saveClass(updatedClassroom));
-    setMembership({ role: "teacher", classId: classroom.id });
-    setScreen("dashboard");
-    screenRef.current = "dashboard";
+    setMembership({ role: "teacher", classId: classroom.id, userId: teacherId });
+    if (!existing) setIssuedIdentity({ userId: teacherId, className: classroom.name });
+    enterAppScreen("dashboard");
     return true;
+  };
+
+  const updateCurrentProfile = (changes) => {
+    const nextName = changes.name?.trim();
+    setProfile((current) => ({
+      ...current,
+      ...changes,
+      name: nextName || current.name,
+    }));
+    updateClassProfile((current) => ({
+      ...current,
+      ...changes,
+      name: nextName || current.name,
+    }));
+
+    if (!nextName || !activeClass || !membership?.userId) return;
+    const role = membership.role === "teacher" ? "teacher" : "student";
+    const existing = findClassPerson(activeClass, membership.userId, role);
+    const updatedClassroom = upsertClassPerson(activeClass, {
+      ...existing,
+      id: membership.userId,
+      name: nextName,
+      role,
+      joinedAt: existing?.joinedAt || new Date().toISOString(),
+    });
+    setClasses((current) => current.map((classroom) =>
+      classroom.id === activeClass.id ? updatedClassroom : classroom
+    ));
+    saveClass(updatedClassroom).catch(console.error);
   };
 
   const resetRole = () => {
     setMembership(null);
-    setScreen("home");
-    screenRef.current = "home";
+    setScreen("role");
+    screenRef.current = "role";
     navigationIndexRef.current = 0;
     setNavigationIndex(0);
   };
@@ -497,39 +808,82 @@ function App() {
           goToNextQuiz,
         }),
         screen === "create" && h(CreateScreen, { createQuiz }),
+        screen === "edit" && activeEditQuiz && h(CreateScreen, {
+          createQuiz: updateQuiz,
+          editingQuiz: activeEditQuiz,
+        }),
         screen === "study" && h(StudyScreen, {
           comments: classComments,
           addComment: (text) => {
             const comment = {
               id: `comment-${Date.now()}`,
-              author: profile.name,
+              author: activeClassProfile?.name || profile.name,
+              authorId: membership.userId,
               text,
               classId: membership.classId,
-              reactions: { clear: 0, retry: 0, good: 0 },
+              reactions: { "😊": 0, "🥰": 0, "🫡": 0, "😯": 0 },
+              replies: [],
             };
             setComments((current) => [comment, ...current]);
             saveComment(comment).catch(console.error);
           },
-          reactToComment: (id, key) => {
+          addReply: (id, text) => {
             setComments((current) => current.map((comment) => {
               if (comment.id !== id) return comment;
               const updated = {
                 ...comment,
-                reactions: { ...comment.reactions, [key]: comment.reactions[key] + 1 },
+                replies: [
+                  ...(comment.replies || []),
+                  {
+                    id: `reply-${Date.now()}`,
+                    author: activeClassProfile?.name || profile.name,
+                    authorId: membership.userId,
+                    text,
+                    createdAt: new Date().toISOString(),
+                  },
+                ],
+              };
+              if (id !== "c1" && id !== "c2") saveComment(updated).catch(console.error);
+              return updated;
+            }));
+          },
+          reactToComment: (id, key) => {
+            setComments((current) => current.map((comment) => {
+              if (comment.id !== id) return comment;
+              const reactions = { "😊": 0, "🥰": 0, "🫡": 0, "😯": 0, ...(comment.reactions || {}) };
+              const updated = {
+                ...comment,
+                reactions: { ...reactions, [key]: (reactions[key] || 0) + 1 },
               };
               if (id !== "c1" && id !== "c2") saveComment(updated).catch(console.error);
               return updated;
             }));
           },
         }),
-        screen === "profile" && h(ProfileScreen, { profile, membership, activeClass, resetRole, setScreen: navigateTo }),
+        screen === "profile" && h(ProfileScreen, {
+          profile,
+          classProfile: activeClassProfile,
+          membership,
+          activeClass,
+          classProfiles,
+          resetRole,
+          setScreen: navigateTo,
+          ownQuizzes: classQuizzes.filter((quiz) => quiz.authorId === membership.userId),
+          editOwnQuiz,
+          updateProfile: updateCurrentProfile,
+        }),
         screen === "dashboard" && membership.role === "teacher" && h(TeacherDashboard, {
           activeClass,
           quizzes: classQuizzes,
+          classProfiles,
           setScreen: navigateTo,
         })
       )
     ),
+    issuedIdentity && h(IssuedUserIdNotice, {
+      identity: issuedIdentity,
+      onClose: () => setIssuedIdentity(null),
+    }),
     h(BottomNav, { current: screen, setScreen: navigateTo })
   );
 }
@@ -541,6 +895,9 @@ function RoleSetup({ createClass, joinClass, joinClassAsTeacher }) {
   const [className, setClassName] = useState("");
   const [classCode, setClassCode] = useState("");
   const [joinCode, setJoinCode] = useState("");
+  const [userId, setUserId] = useState("");
+  const [classPassword, setClassPassword] = useState("");
+  const [returning, setReturning] = useState(null);
   const [teacherAction, setTeacherAction] = useState("");
   const [error, setError] = useState("");
 
@@ -553,11 +910,22 @@ function RoleSetup({ createClass, joinClass, joinClassAsTeacher }) {
 
   const submitJoin = async (event) => {
     event.preventDefault();
+    if (returning === null) {
+      setError("「はじめて入る」か「入ったことがある」を選んでください。");
+      return;
+    }
+    if (returning && userId.length !== 7) {
+      setError(`利用者IDを確認してください。例：${role === "teacher" ? "T-ABCDE" : "S-ABCDE"}`);
+      return;
+    }
     const joined = role === "teacher"
-      ? await joinClassAsTeacher(joinCode, nickname.trim())
-      : await joinClass(joinCode, nickname.trim());
+      ? await joinClassAsTeacher({ code: joinCode, nickname: nickname.trim(), userId, password: classPassword })
+      : await joinClass({ code: joinCode, nickname: nickname.trim(), userId });
     if (!joined) {
-      setError("クラスが見つかりません。コードをもう一度確認してください。");
+      const details = role === "teacher"
+        ? "クラスコード、利用者ID、先生用パスワード"
+        : returning ? "クラスコードと利用者ID" : "クラスコード";
+      setError(`${details}をもう一度確認してください。`);
     }
   };
 
@@ -585,7 +953,10 @@ function RoleSetup({ createClass, joinClass, joinClassAsTeacher }) {
       className: "role-form",
       onSubmit: (event) => {
         event.preventDefault();
-        if (nickname.trim()) setStep(role === "teacher" ? "teacher-choice" : "class");
+        if (nickname.trim()) {
+          setReturning(null);
+          setStep(role === "teacher" ? "teacher-choice" : "class");
+        }
       },
     },
       h("button", {
@@ -634,6 +1005,7 @@ function RoleSetup({ createClass, joinClass, joinClassAsTeacher }) {
           className: "entry-option",
           onClick: () => {
             setTeacherAction("create");
+            setReturning(false);
             setStep("class");
           },
         },
@@ -646,6 +1018,9 @@ function RoleSetup({ createClass, joinClass, joinClassAsTeacher }) {
           className: "entry-option",
           onClick: () => {
             setTeacherAction("join");
+            setReturning(null);
+            setUserId("");
+            setClassPassword("");
             setStep("class");
           },
         },
@@ -659,7 +1034,7 @@ function RoleSetup({ createClass, joinClass, joinClassAsTeacher }) {
       className: "role-form",
       onSubmit: (event) => {
         event.preventDefault();
-        createClass({ name: className, code: classCode, nickname: nickname.trim() });
+        createClass({ name: className, code: classCode, nickname: nickname.trim(), password: classPassword });
       },
     },
       h("button", { type: "button", className: "text-button", onClick: () => setStep("teacher-choice") }, "入り方の選択に戻る"),
@@ -673,12 +1048,19 @@ function RoleSetup({ createClass, joinClass, joinClassAsTeacher }) {
         placeholder: "例：2年3組 数学",
         required: true,
       })),
+      field("先生用パスワード", h("input", {
+        type: "password",
+        value: classPassword,
+        onChange: (event) => setClassPassword(event.target.value.slice(0, 32)),
+        placeholder: "共同教員が入るときに使います",
+        required: true,
+      })),
       h("div", { className: "code-panel" },
         h("span", null, "クラスコード"),
         h("strong", null, classCode),
         h("small", null, "作成後、このコードを生徒に共有してください")
       ),
-      h("button", { className: "primary-button", type: "submit" }, h(Plus, { size: 18 }), "クラスを作成")
+      h("button", { className: "primary-button", type: "submit", disabled: !className.trim() || !classPassword }, h(Plus, { size: 18 }), "クラスを作成")
     ),
     step === "class" && (role === "student" || teacherAction === "join") && h("form", { className: "role-form", onSubmit: submitJoin },
       h("button", {
@@ -690,9 +1072,39 @@ function RoleSetup({ createClass, joinClass, joinClassAsTeacher }) {
         h("div", { className: `role-icon ${role}` }, h(KeyRound, { size: 26 })),
         h("div", null,
           h("strong", null, role === "teacher" ? "教員としてクラスに参加" : "クラスに参加"),
-          h("span", null, "共有された6文字のコードを入力")
+          h("span", null, "参加方法を選び、共有されたコードを入力します")
         )
       ),
+      h("div", { className: "join-mode-selector", "aria-label": "クラスへの参加方法" },
+        h("button", {
+          type: "button",
+          className: `join-mode-button ${returning === false ? "selected" : ""}`,
+          "aria-pressed": returning === false,
+          onClick: () => {
+            setReturning(false);
+            setUserId("");
+            setError("");
+          },
+        },
+          h(Plus, { size: 20 }),
+          h("span", null, "はじめて入る"),
+          h("small", null, "利用者IDを新しく発行")
+        ),
+        h("button", {
+          type: "button",
+          className: `join-mode-button ${returning === true ? "selected" : ""}`,
+          "aria-pressed": returning === true,
+          onClick: () => {
+            setReturning(true);
+            setError("");
+          },
+        },
+          h(KeyRound, { size: 20 }),
+          h("span", null, "入ったことがある"),
+          h("small", null, "以前の利用者IDで入室")
+        )
+      ),
+      returning === null && h("p", { className: "join-mode-help" }, "まず、どちらかを選んでください。"),
       field("クラスコード", h("input", {
         className: "code-input",
         value: joinCode,
@@ -705,10 +1117,105 @@ function RoleSetup({ createClass, joinClass, joinClassAsTeacher }) {
         autoCapitalize: "characters",
         required: true,
       })),
+      returning && field("利用者ID", h("input", {
+        className: "code-input",
+        value: userId,
+        onChange: (event) => {
+          setUserId(event.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 7));
+          setError("");
+        },
+        placeholder: role === "teacher" ? "T-ABCDE" : "S-ABCDE",
+        maxLength: 7,
+        autoCapitalize: "characters",
+        required: true,
+      })),
+      role === "teacher" && field("クラスのパスワード", h("input", {
+        type: "password",
+        value: classPassword,
+        onChange: (event) => {
+          setClassPassword(event.target.value.slice(0, 32));
+          setError("");
+        },
+        placeholder: "先生用パスワード",
+        required: true,
+      })),
       error && h("p", { className: "form-error" }, error),
-      h("button", { className: "primary-button", type: "submit", disabled: joinCode.length !== 6 },
+      h("button", {
+        className: "primary-button",
+        type: "submit",
+        disabled:
+          returning === null ||
+          joinCode.length !== 6 ||
+          (returning && userId.length !== 7) ||
+          (role === "teacher" && !classPassword),
+      },
         role === "teacher" ? "教員として参加" : "クラスに参加"
       )
+    )
+  );
+}
+
+function IssuedUserIdNotice({ identity, onClose }) {
+  const [copyStatus, setCopyStatus] = useState("");
+  const idInputRef = useRef(null);
+
+  const copyUserId = () => {
+    const input = idInputRef.current;
+    let copied = false;
+    if (input) {
+      input.focus();
+      input.select();
+      input.setSelectionRange(0, input.value.length);
+      try {
+        copied = document.execCommand("copy");
+      } catch {
+        copied = false;
+      }
+    }
+
+    const finish = (succeeded) => {
+      setCopyStatus(succeeded ? "コピーしました" : "IDを選択しました。コピーしてください");
+    };
+
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(identity.userId)
+          .then(() => finish(true))
+          .catch(() => finish(copied));
+        return;
+      }
+    } catch {}
+    finish(copied);
+  };
+
+  return h("div", { className: "issued-id-overlay" },
+    h("section", {
+      className: "issued-id-dialog",
+      role: "dialog",
+      "aria-modal": "true",
+      "aria-labelledby": "issued-id-title",
+    },
+      h("div", { className: "issued-id-icon" }, h(CheckCircle2, { size: 30 })),
+      h("span", null, identity.className),
+      h("h2", { id: "issued-id-title" }, "利用者IDを発行しました"),
+      h("p", null, "次にこのクラスへ入るときに使います。忘れないように控えてください。"),
+      h("div", { className: "issued-id-value" },
+        h("input", {
+          ref: idInputRef,
+          value: identity.userId,
+          readOnly: true,
+          "aria-label": "発行された利用者ID",
+          onClick: (event) => event.currentTarget.select(),
+        }),
+        h("button", {
+          type: "button",
+          onClick: copyUserId,
+          title: "利用者IDをコピー",
+          "aria-label": "利用者IDをコピー",
+        }, copyStatus === "コピーしました" ? h(CheckCircle2, { size: 20 }) : h(Clipboard, { size: 20 }))
+      ),
+      copyStatus && h("small", { className: "issued-id-status", role: "status" }, copyStatus),
+      h("button", { type: "button", className: "primary-button", onClick: onClose }, "確認しました")
     )
   );
 }
@@ -725,6 +1232,10 @@ function ClassBanner({ membership, activeClass, setScreen }) {
         h("span", null, isTeacher ? "教員" : "生徒"),
         h("h2", null, activeClass.name)
       )
+    ),
+    membership.userId && h("div", { className: "class-user-id-row" },
+      h("span", null, "利用者ID"),
+      h("strong", null, membership.userId)
     ),
     isTeacher
       ? h(React.Fragment, null,
@@ -743,11 +1254,12 @@ function ClassBanner({ membership, activeClass, setScreen }) {
   );
 }
 
-function TeacherDashboard({ activeClass, quizzes, setScreen }) {
+function TeacherDashboard({ activeClass, quizzes, classProfiles, setScreen }) {
   const [copyStatus, setCopyStatus] = useState("");
   const codeInputRef = useRef(null);
   if (!activeClass) return null;
   const members = activeClass.members || [];
+  const activeStudentCount = activeClass.activeStudentCount || 0;
   const challengeTotal = quizzes.reduce((total, quiz) => total + quiz.solvedCount, 0);
 
   const copyCode = () => {
@@ -811,28 +1323,20 @@ function TeacherDashboard({ activeClass, quizzes, setScreen }) {
       copyStatus && h("small", { role: "status" }, copyStatus)
     ),
     h("div", { className: "dashboard-stats" },
-      h(DashboardStat, { icon: Users, value: members.length, label: "参加生徒" }),
+      h(DashboardStat, { icon: Users, value: activeStudentCount, label: "現在の入室生徒" }),
       h(DashboardStat, { icon: BookOpen, value: quizzes.length, label: "クイズ" }),
       h(DashboardStat, { icon: Trophy, value: challengeTotal, label: "挑戦回数" })
     ),
     h("section", { className: "dashboard-section" },
       h("div", { className: "section-title-row" },
-        h("div", null, h("span", null, "Students"), h("h2", null, "参加している生徒")),
-        h("strong", null, `${members.length}人`)
+        h("div", null, h("span", null, "Live"), h("h2", null, "現在の入室状況")),
+        h("strong", null, `${activeStudentCount}人`)
       ),
-      members.length
-        ? h("div", { className: "member-list" },
-            members.map((member) => h("div", { className: "member-row", key: member.id },
-              h("div", { className: "avatar" }, member.name.slice(0, 1)),
-              h("strong", null, member.name),
-              h("span", null, "参加中")
-            ))
-          )
-        : h("div", { className: "empty-dashboard" },
-            h(Users, { size: 25 }),
-            h("strong", null, "まだ参加者はいません"),
-            h("p", null, "上のクラスコードを生徒に共有してください。")
-          )
+      h("div", { className: "empty-dashboard" },
+        h(Users, { size: 25 }),
+        h("strong", null, "過去に参加した生徒の一覧は表示しません"),
+        h("p", null, "この欄はリアルタイムの入室数だけを確認する場所にしました。")
+      )
     ),
     h("section", { className: "dashboard-section" },
       h("div", { className: "section-title-row" },
@@ -857,11 +1361,11 @@ function HomeScreen({ setScreen, membership, activeClass }) {
   const actions = [
     ["クイズを解く", "4択で気軽に挑戦", BookOpen, "quizzes"],
     ["クイズを作る", "理解を形にする", PencilLine, "create"],
-    ["相互学習", "コメントで学び合う", Users, "study"],
+    ["トーク", "リプライで学び合う", Users, "study"],
     ["プロフィール", "正解数より挑戦数", CircleUserRound, "profile"],
   ];
   return h("section", { className: "screen home-screen" },
-    h(Header, { eyebrow: "qpath", title: "「間違えて良い」から始まる学び", body: "挑戦・作問・相互学習を大切にするクイズ共有プロトタイプ" }),
+    h(Header, { eyebrow: "qpath", title: "「間違えて良い」から始まる学び", body: "挑戦・作問・トークを大切にするクイズ共有プロトタイプ" }),
     h(ClassBanner, { membership, activeClass, setScreen }),
     h("div", { className: "hero-card" },
       h("div", null, h("strong", null, "今日の合言葉"), h("p", null, "挑戦したことが学びです。ここから理解が深まります。")),
@@ -939,9 +1443,12 @@ function AnswerScreen({ quiz, recordAnswer, quizProgress, goToNextQuiz }) {
     setResult(null);
   };
   useEffect(() => { retryCurrentQuiz(); }, [quiz.id, quizProgress?.current]);
-  const submit = () => {
-    setResult({ isCorrect: selected === quiz.correctAnswer });
-    recordAnswer(quiz.id);
+  const answerNow = (choice) => {
+    if (result) return;
+    const isCorrect = choice === quiz.correctAnswer;
+    setSelected(choice);
+    setResult({ isCorrect, isUnknown: choice === "__unknown__" });
+    recordAnswer(quiz, isCorrect);
   };
   return h("section", { className: "screen" },
     h(Header, { eyebrow: quiz.subject, title: quiz.title, body: `${quiz.difficulty}・${quiz.author}` }),
@@ -953,13 +1460,18 @@ function AnswerScreen({ quiz, recordAnswer, quizProgress, goToNextQuiz }) {
           h("button", {
             className: `choice-button ${selected === choice ? "selected" : ""} ${result && choice === quiz.correctAnswer ? "correct" : ""}`,
             key: choice,
-            onClick: () => !result && setSelected(choice),
+            onClick: () => answerNow(choice),
             disabled: !!result,
           }, h("span", null, String.fromCharCode(65 + index)), choice)
-        )
+        ),
+        h("button", {
+          className: `choice-button unknown-choice ${selected === "__unknown__" ? "selected" : ""}`,
+          onClick: () => answerNow("__unknown__"),
+          disabled: !!result,
+        }, h("span", null, "?"), "分からない")
       ),
       !result
-        ? h("button", { className: "primary-button", disabled: !selected, onClick: submit }, "回答する")
+        ? h("p", { className: "tap-answer-note" }, "選択肢を押すと、そのまま判定に進みます。")
         : h("div", { className: `result-box ${result.isCorrect ? "positive" : "learning"}` },
           h("strong", null, result.isCorrect ? "正解です！" : "不正解でも、間違えて良い。ここから学べます"),
           !result.isCorrect && h("p", null, "挑戦したことが学びです。ここから理解が深まります。"),
@@ -983,10 +1495,21 @@ function AnswerScreen({ quiz, recordAnswer, quizProgress, goToNextQuiz }) {
   );
 }
 
-function CreateScreen({ createQuiz }) {
-  const initial = { title: "", subject: "", question: "", choices: ["", "", "", ""], correctAnswer: "", explanation: "", difficulty: "普通" };
+function CreateScreen({ createQuiz, editingQuiz }) {
+  const initial = editingQuiz
+    ? {
+        title: editingQuiz.title || "",
+        subject: editingQuiz.subject || "",
+        question: editingQuiz.question || "",
+        choices: editingQuiz.choices || ["", "", "", ""],
+        correctAnswer: editingQuiz.correctAnswer || "",
+        explanation: editingQuiz.explanation || "",
+        difficulty: editingQuiz.difficulty || "普通",
+      }
+    : { title: "", subject: "", question: "", choices: ["", "", "", ""], correctAnswer: "", explanation: "", difficulty: "普通" };
   const [form, setForm] = useState(initial);
   const [note, setNote] = useState("");
+  useEffect(() => { setForm(initial); }, [editingQuiz?.id]);
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const updateChoice = (index, value) => setForm((current) => {
     const choices = [...current.choices];
@@ -1002,10 +1525,14 @@ function CreateScreen({ createQuiz }) {
       return;
     }
     createQuiz(form);
-    setForm(initial);
+    if (!editingQuiz) setForm(initial);
   };
   return h("section", { className: "screen" },
-    h(Header, { eyebrow: "Create", title: "クイズを作る", body: "作問も大切な学びです。考えた道すじを解説に残そう。" }),
+    h(Header, {
+      eyebrow: editingQuiz ? "Edit" : "Create",
+      title: editingQuiz ? "クイズを編集" : "クイズを作る",
+      body: editingQuiz ? "自分で作った問題を、さらに伝わりやすく整えましょう。" : "作問も大切な学びです。考えた道すじを解説に残そう。",
+    }),
     h("form", { className: "form-card", onSubmit: submit },
       field("タイトル", h("input", { value: form.title, onChange: (e) => update("title", e.target.value), placeholder: "例：比例の基本" })),
       field("教科", h("select", {
@@ -1031,7 +1558,7 @@ function CreateScreen({ createQuiz }) {
       )),
       field("解説", h("textarea", { value: form.explanation, onChange: (e) => update("explanation", e.target.value), placeholder: "考え方や覚え方を書いてください", rows: 4 })),
       note && h("p", { className: "soft-message" }, note),
-      h("button", { className: "primary-button", type: "submit" }, h(Plus, { size: 18 }), "作成して共有")
+      h("button", { className: "primary-button", type: "submit" }, h(Plus, { size: 18 }), editingQuiz ? "更新する" : "作成して共有")
     ),
     h(RevenueCard)
   );
@@ -1041,17 +1568,25 @@ function field(label, control) {
   return h("label", null, label, control);
 }
 
-function StudyScreen({ comments, addComment: onAddComment, reactToComment }) {
+function StudyScreen({ comments, addComment: onAddComment, addReply, reactToComment }) {
   const [text, setText] = useState("");
+  const [replyDrafts, setReplyDrafts] = useState({});
   const submitComment = () => {
     if (!text.trim()) return;
     onAddComment(text.trim());
     setText("");
   };
+  const submitReply = (id) => {
+    const reply = (replyDrafts[id] || "").trim();
+    if (!reply) return;
+    addReply(id, reply);
+    setReplyDrafts((current) => ({ ...current, [id]: "" }));
+  };
+  const reactionChoices = ["😊", "🥰", "🫡", "😯"];
   return h("section", { className: "screen" },
-    h(Header, { eyebrow: "Mutual Learning", title: "相互学習", body: "感じたことを残すと、次の人の学びになります。" }),
+    h(Header, { eyebrow: "Talk", title: "トーク", body: "気づきにリプライして、SNSのように学び合えます。" }),
     h("div", { className: "comment-box" },
-      h("textarea", { value: text, onChange: (e) => setText(e.target.value), placeholder: "解き方の気づきや、もう一回挑戦したい理由を書いてみよう", rows: 3 }),
+      h("textarea", { value: text, onChange: (e) => setText(e.target.value), placeholder: "気づき、質問、ここから理解が深まったことを書いてみよう", rows: 3 }),
       h("button", { className: "primary-button", onClick: submitComment }, h(Send, { size: 17 }), "投稿")
     ),
     h("div", { className: "comment-list" },
@@ -1060,9 +1595,25 @@ function StudyScreen({ comments, addComment: onAddComment, reactToComment }) {
           h("div", { className: "avatar-row" }, h("div", { className: "avatar" }, "匿"), h("strong", null, comment.author)),
           h("p", null, comment.text),
           h("div", { className: "reaction-row" },
-            h("button", { onClick: () => reactToComment(comment.id, "clear") }, `わかりやすい ${comment.reactions.clear}`),
-            h("button", { onClick: () => reactToComment(comment.id, "retry") }, `もう一回挑戦したい ${comment.reactions.retry}`),
-            h("button", { onClick: () => reactToComment(comment.id, "good") }, `いい問題 ${comment.reactions.good}`)
+            reactionChoices.map((reaction) => h("button", {
+              key: reaction,
+              onClick: () => reactToComment(comment.id, reaction),
+              "aria-label": `${reaction}でリアクション`,
+            }, `${reaction} ${(comment.reactions || {})[reaction] || 0}`))
+          ),
+          (comment.replies || []).length > 0 && h("div", { className: "reply-list" },
+            (comment.replies || []).map((reply) => h("div", { className: "reply-card", key: reply.id },
+              h("strong", null, reply.author),
+              h("p", null, reply.text)
+            ))
+          ),
+          h("div", { className: "reply-box" },
+            h("input", {
+              value: replyDrafts[comment.id] || "",
+              onChange: (event) => setReplyDrafts((current) => ({ ...current, [comment.id]: event.target.value })),
+              placeholder: "リプライを書く",
+            }),
+            h("button", { type: "button", onClick: () => submitReply(comment.id) }, h(Send, { size: 15 }))
           )
         )
       )
@@ -1070,21 +1621,164 @@ function StudyScreen({ comments, addComment: onAddComment, reactToComment }) {
   );
 }
 
-function ProfileScreen({ profile, membership, activeClass, resetRole, setScreen }) {
+function SimpleBars({ title, data }) {
+  const entries = Object.entries(data || {}).filter(([, value]) => value > 0).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const max = Math.max(1, ...entries.map(([, value]) => value));
+  return h("div", { className: "bar-card" },
+    h("h3", null, title),
+    entries.length
+      ? entries.map(([label, value]) => h("div", { className: "bar-row", key: label },
+          h("span", null, label),
+          h("div", { className: "bar-track" }, h("div", { className: "bar-fill", style: { width: `${Math.max(8, Math.round((value / max) * 100))}%` } })),
+          h("strong", null, value)
+        ))
+      : h("p", null, "まだ記録がありません。挑戦したことが学びです。")
+  );
+}
+
+function SubjectBars({ title, answered, correct }) {
+  const subjects = Array.from(new Set([...Object.keys(answered || {}), ...Object.keys(correct || {})]));
+  const entries = subjects.map((subject) => {
+    const attempts = answered[subject] || 0;
+    const correctCount = correct[subject] || 0;
+    return { subject, attempts, accuracy: attempts ? Math.round((correctCount / attempts) * 100) : 0 };
+  }).filter((item) => item.attempts > 0).sort((a, b) => b.attempts - a.attempts).slice(0, 6);
+  return h("div", { className: "bar-card" },
+    h("h3", null, title),
+    entries.length
+      ? entries.map((item) => h("div", { className: "bar-row", key: item.subject },
+          h("span", null, item.subject),
+          h("div", { className: "bar-track" }, h("div", { className: "bar-fill", style: { width: `${Math.max(8, item.accuracy)}%` } })),
+          h("strong", null, `${item.accuracy}%`)
+        ))
+      : h("p", null, "まだ傾向はありません。ここから理解が深まります。")
+  );
+}
+
+function ProfileScreen({ profile, classProfile, membership, activeClass, classProfiles, resetRole, setScreen, ownQuizzes, editOwnQuiz, updateProfile }) {
   const roleLabel = membership.role === "teacher" ? "教員" : "生徒";
+  const displayProfile = classProfile || profile;
+  const studentMembers = membership.role === "teacher" ? (activeClass?.members || []) : [];
+  const [draftName, setDraftName] = useState(displayProfile.name || profile.name);
+  const [draftBio, setDraftBio] = useState(normalizeBio(displayProfile.bio));
+  const [savedNote, setSavedNote] = useState("");
+  useEffect(() => {
+    setDraftName(displayProfile.name || profile.name);
+    setDraftBio(normalizeBio(displayProfile.bio));
+  }, [displayProfile.name, displayProfile.bio, profile.name]);
+  const solvedCount = displayProfile.solvedCount || 0;
+  const correctCount = displayProfile.correctCount || 0;
+  const accuracy = solvedCount ? Math.round((correctCount / solvedCount) * 100) : 0;
   return h("section", { className: "screen" },
     h(Header, { eyebrow: "Profile", title: "プロフィール", body: "正解数より挑戦数を見えるようにしています。" }),
     h("article", { className: "profile-card" },
-      h("div", { className: "big-avatar" }, "匿"),
-      h("h2", null, profile.name),
+      h("div", { className: "big-avatar", style: { background: displayProfile.avatarColor || pickAvatarColor(membership.userId) } }, (displayProfile.name || profile.name || "匿").slice(0, 1)),
+      h("h2", null, displayProfile.name || profile.name),
       h("span", { className: "role-badge" }, roleLabel),
+      h("span", { className: "user-id-badge" }, `利用者ID: ${membership.userId || "未発行"}`),
+      normalizeBio(displayProfile.bio) && h("p", null, normalizeBio(displayProfile.bio)),
       h("p", null, "正解数より、挑戦した数を大切にしています")
     ),
+    h("form", {
+      className: "profile-edit-card",
+      onSubmit: (event) => {
+        event.preventDefault();
+        updateProfile({ name: draftName.trim() || "匿名ユーザー", bio: draftBio.trim() });
+        setSavedNote("プロフィールを保存しました。");
+        setTimeout(() => setSavedNote(""), 1800);
+      },
+    },
+      field("表示名", h("input", {
+        value: draftName,
+        onChange: (event) => setDraftName(event.target.value.slice(0, 20)),
+        maxLength: 20,
+      })),
+      field("プロフィールの一言", h("textarea", {
+        value: draftBio,
+        onChange: (event) => setDraftBio(event.target.value.slice(0, 80)),
+        rows: 2,
+        maxLength: 80,
+      })),
+      h("div", { className: "avatar-color-picker", "aria-label": "アイコン色を選ぶ" },
+        AVATAR_COLORS.map((color) => h("button", {
+          type: "button",
+          key: color,
+          className: (displayProfile.avatarColor || pickAvatarColor(membership.userId)) === color ? "selected" : "",
+          style: { background: color },
+          onClick: () => updateProfile({ avatarColor: color }),
+          "aria-label": `${color}を選ぶ`,
+        }))
+      ),
+      savedNote && h("p", { className: "soft-message" }, savedNote),
+      h("button", { className: "secondary-button", type: "submit" }, "プロフィールを保存")
+    ),
     h(ClassBanner, { membership, activeClass, setScreen }),
+    membership.role === "teacher" && h("section", { className: "student-id-card" },
+      h("div", { className: "section-title-row" },
+        h("div", null,
+          h("span", null, "Student IDs"),
+          h("h2", null, "生徒の名前と利用者ID")
+        ),
+        h("strong", null, `${studentMembers.length}人`)
+      ),
+      h("p", { className: "student-id-note" }, "生徒が利用者IDを忘れたときに、ここから確認できます。"),
+      studentMembers.length
+        ? h("div", { className: "student-id-list" },
+            studentMembers.map((student) => {
+              const studentProfile = classProfiles[getProfileKey(activeClass.id, student.id)];
+              const studentName = studentProfile?.name || student.name || "匿名ユーザー";
+              return h("article", { key: student.id },
+                h("div", {
+                  className: "student-id-avatar",
+                  style: { background: studentProfile?.avatarColor || pickAvatarColor(student.id) },
+                }, studentName.slice(0, 1)),
+                h("div", null,
+                  h("strong", null, studentName),
+                  h("span", null, student.id)
+                )
+              );
+            })
+          )
+        : h("div", { className: "empty-dashboard" },
+            h(Users, { size: 24 }),
+            h("strong", null, "参加済みの生徒はまだいません"),
+            h("p", null, "生徒が初めて入室すると、名前と利用者IDが表示されます。")
+          )
+    ),
     h("div", { className: "stats-grid" },
-      h(Stat, { label: "作成したクイズ数", value: profile.createdCount, icon: Edit3 }),
-      h(Stat, { label: "解いたクイズ数", value: profile.solvedCount, icon: BookOpen }),
-      h(Stat, { label: "挑戦回数", value: profile.challengeCount, icon: Trophy })
+      h(Stat, { label: "作成したクイズ数", value: displayProfile.createdCount || 0, icon: Edit3 }),
+      h(Stat, { label: "解いたクイズ数", value: displayProfile.solvedCount || 0, icon: BookOpen }),
+      h(Stat, { label: "挑戦回数", value: displayProfile.challengeCount || 0, icon: Trophy })
+    ),
+    h("section", { className: "analytics-card" },
+      h("div", { className: "analytics-summary" },
+        h("div", null, h("strong", null, `${accuracy}%`), h("span", null, "正答率")),
+        h("div", null, h("strong", null, solvedCount), h("span", null, "解いた数")),
+        h("div", null, h("strong", null, displayProfile.solvedCreatedCount || 0), h("span", null, "解かれた数"))
+      ),
+      h(SubjectBars, { title: "得意・これから伸びる教科", answered: displayProfile.answeredBySubject || {}, correct: displayProfile.correctBySubject || {} }),
+      h(SimpleBars, { title: "作問の教科傾向", data: displayProfile.createdBySubject || {} })
+    ),
+    h("section", { className: "profile-quiz-card" },
+      h("div", { className: "section-title-row" },
+        h("div", null, h("span", null, "My quizzes"), h("h2", null, "自分が作ったクイズ")),
+        h("strong", null, `${ownQuizzes.length}問`)
+      ),
+      ownQuizzes.length
+        ? h("div", { className: "profile-quiz-list" },
+            ownQuizzes.map((quiz) => h("article", { key: quiz.id },
+              h("div", null,
+                h("strong", null, quiz.title),
+                h("span", null, `${quiz.subject}・${quiz.difficulty}`)
+              ),
+              h("button", { type: "button", onClick: () => editOwnQuiz(quiz.id) }, h(Edit3, { size: 16 }), "編集")
+            ))
+          )
+        : h("div", { className: "empty-dashboard" },
+            h(Edit3, { size: 24 }),
+            h("strong", null, "まだ自作クイズはありません"),
+            h("p", null, "作問も大切な学びです。")
+          )
     ),
     h(RevenueCard),
     h("button", { className: "role-reset-button", onClick: resetRole },
@@ -1106,7 +1800,7 @@ function BottomNav({ current, setScreen }) {
   const items = [
     ["profile", "プロフィール", CircleUserRound],
     ["quizzes", "クイズ", BookOpen],
-    ["study", "自習", MessageCircle],
+    ["study", "トーク", MessageCircle],
     ["create", "作問", PencilLine],
   ];
   return h("nav", { className: "bottom-nav" },
