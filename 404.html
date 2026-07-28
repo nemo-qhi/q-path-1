@@ -5,7 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>qpath</title>
     <script>
-      window.location.replace("/#home");
+      const firstPath = window.location.pathname.split("/").filter(Boolean)[0];
+      const basePath = firstPath ? `/${firstPath}/` : "/";
+      window.location.replace(`${basePath}#home`);
     </script>
   </head>
   <body>

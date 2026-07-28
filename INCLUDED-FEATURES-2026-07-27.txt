@@ -4,6 +4,7 @@ qpath complete all build - 2026-07-27
 
 含まれているもの:
 - GitHub Pages向けの index.html / 404.html / .nojekyll
+- GitHub Pagesの /q-path/ 配下で動く相対パス対応
 - vendor配下のReact/Firebase/lucide依存ファイル
 - Firebase Anonymous Auth / Firestore連携
 - localStorageのバックアップ保存
