@@ -9,11 +9,14 @@ import {
   CircleUserRound,
   Clipboard,
   Edit3,
+  FileText,
   GraduationCap,
   Heart,
   KeyRound,
   Lightbulb,
+  LockKeyhole,
   LogOut,
+  Megaphone,
   MessageCircle,
   PencilLine,
   Plus,
@@ -21,6 +24,7 @@ import {
   School,
   Send,
   Sparkles,
+  Trash2,
   Trophy,
   Users,
 } from "lucide-react";
@@ -30,16 +34,19 @@ import {
   increaseQuizSolvedCount,
   migrateLocalData,
   removeQuiz,
+  removeUpdateNote,
   saveClass,
   saveComment,
   saveQuiz,
+  saveUpdateNote,
   subscribeClasses,
   subscribeComments,
   subscribeQuizzes,
+  subscribeUpdateNotes,
 } from "./firebase.js";
 
 const h = React.createElement;
-const APP_SCREENS = new Set(["role", "home", "profile", "quizzes", "answer", "create", "study", "dashboard", "edit"]);
+const APP_SCREENS = new Set(["role", "home", "profile", "quizzes", "answer", "create", "study", "dashboard", "edit", "updates"]);
 
 function normalizeAnswerValue(value) {
   return String(value ?? "").normalize("NFKC").trim();
@@ -60,6 +67,39 @@ function isRetiredOyamaQuiz(quiz) {
     .some((value) => normalizeAnswerValue(value).includes("おやま"));
 }
 
+function normalizeClassCode(value) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 6);
+}
+
+function normalizeUserId(value) {
+  const normalized = String(value ?? "")
+    .normalize("NFKC")
+    .toUpperCase()
+    .replace(/[‐‑‒–—―ー−\s]/g, "-")
+    .replace(/[^A-Z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .slice(0, 40);
+
+  return /^[ST][A-Z0-9]{1,5}$/.test(normalized)
+    ? `${normalized[0]}-${normalized.slice(1)}`
+    : normalized;
+}
+
+const DEVELOPER_KEY_HASH = "73e5dc65dc4e27c582544ed16688a2f5eca044a03c62389ed5b5b02ed918ff7f";
+
+async function hashDeveloperKey(value) {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error("このブラウザでは開発者キーを確認できません。");
+  }
+  const data = new TextEncoder().encode(value);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function getScreenFromHash() {
   if (typeof window === "undefined") return "home";
   const value = window.location.hash.replace(/^#/, "");
@@ -73,6 +113,8 @@ const STORAGE = {
   membership: "qpath.membership",
   classes: "qpath.classes",
   classProfiles: "qpath.classProfiles",
+  updateNotes: "qpath.updateNotes",
+  developerAccess: "qpath.developerAccess",
 };
 
 const AVATAR_COLORS = ["#38aee0", "#62cfbd", "#7aa7ff", "#f59fb3", "#f2b84b", "#8ec96d"];
@@ -140,15 +182,24 @@ function getProfileKey(classId, userId) {
 
 function getClassroomPeople(classroom) {
   return [
-    ...(classroom?.members || []).map((person) => ({ ...person, role: "student" })),
-    ...(classroom?.teacherMembers || []).map((person) => ({ ...person, role: "teacher" })),
+    ...(classroom?.members || []).map((person) =>
+      typeof person === "string"
+        ? { id: "", name: person, role: "student" }
+        : { ...person, id: normalizeUserId(person.id || person.userId), role: "student" }
+    ),
+    ...(classroom?.teacherMembers || []).map((person) =>
+      typeof person === "string"
+        ? { id: "", name: person, role: "teacher" }
+        : { ...person, id: normalizeUserId(person.id || person.userId), role: "teacher" }
+    ),
   ];
 }
 
 function findClassPerson(classroom, userId, role) {
-  const normalized = userId.trim().toUpperCase();
+  const normalized = normalizeUserId(userId);
+  if (!normalized) return null;
   return getClassroomPeople(classroom).find((person) =>
-    person.id === normalized && (!role || person.role === role)
+    normalizeUserId(person.id) === normalized && (!role || person.role === role)
   );
 }
 
@@ -161,9 +212,14 @@ function generateUniqueUserId(classroom, role) {
 function upsertClassPerson(classroom, person) {
   const key = person.role === "teacher" ? "teacherMembers" : "members";
   const list = classroom[key] || [];
-  const nextList = list.some((item) => item.id === person.id)
-    ? list.map((item) => item.id === person.id ? { ...item, ...person } : item)
-    : [...list, person];
+  const normalizedPerson = { ...person, id: normalizeUserId(person.id) };
+  const nextList = list.some((item) => normalizeUserId(item?.id || item?.userId) === normalizedPerson.id)
+    ? list.map((item) =>
+        normalizeUserId(item?.id || item?.userId) === normalizedPerson.id
+          ? { ...item, ...normalizedPerson }
+          : item
+      )
+    : [...list, normalizedPerson];
   return { ...classroom, [key]: nextList };
 }
 
@@ -171,6 +227,32 @@ function upsertClassroomInList(classrooms, classroom) {
   return classrooms.some((item) => item.id === classroom.id)
     ? classrooms.map((item) => item.id === classroom.id ? classroom : item)
     : [classroom, ...classrooms];
+}
+
+async function resolveClassForJoin(classes, code, userId = "", role = "") {
+  const normalizedCode = normalizeClassCode(code);
+  const localMatches = classes.filter((item) => normalizeClassCode(item.code) === normalizedCode);
+  let remoteMatch = null;
+
+  try {
+    remoteMatch = await findClassByCode(normalizedCode);
+  } catch (error) {
+    console.error("クラス情報をFirebaseから確認できませんでした。", error);
+  }
+
+  const candidates = [
+    remoteMatch,
+    ...localMatches.filter((item) => item.id !== remoteMatch?.id),
+  ].filter(Boolean);
+
+  if (userId) {
+    return candidates.find((classroom) => findClassPerson(classroom, userId, role))
+      || remoteMatch
+      || localMatches[0]
+      || null;
+  }
+
+  return remoteMatch || localMatches[0] || null;
 }
 
 const samples = [
@@ -233,6 +315,44 @@ const sampleComments = [
   { id: "c2", author: "匿名ユーザー", text: "選択肢の並びがちょうど考えやすかったです。", reactions: { clear: 5, retry: 1, good: 6 } },
 ];
 
+const defaultUpdateNotes = [
+  {
+    id: "update-20260730-rejoin",
+    version: "β 0.4",
+    category: "改善",
+    title: "クラスへの再入室を安定させました",
+    body: "新しい利用者IDと旧形式の利用者IDの両方に対応しました。全角入力やハイフンの違いも自動で整えて照合します。",
+    publishedAt: "2026-07-30T00:00:00+09:00",
+    isDefault: true,
+  },
+  {
+    id: "update-20260728-flow",
+    version: "β 0.3",
+    category: "アップデート",
+    title: "入室フローと回答画面を改善しました",
+    body: "入室方法を選んだあとに必要な入力欄を表示する形へ変更しました。回答後の正誤表示と、次の問題へ進む流れも整えています。",
+    publishedAt: "2026-07-28T00:00:00+09:00",
+    isDefault: true,
+  },
+  {
+    id: "update-beta-start",
+    version: "β版",
+    category: "お知らせ",
+    title: "qpath β版を公開しています",
+    body: "「間違えて良い」から始まる学びを形にするため、みなさんの挑戦をもとに少しずつ改善していきます。",
+    publishedAt: "2026-07-04T00:00:00+09:00",
+    isDefault: true,
+  },
+];
+
+function withDefaultUpdateNotes(remoteNotes) {
+  const defaults = new Set(defaultUpdateNotes.map((note) => note.id));
+  return [
+    ...defaultUpdateNotes,
+    ...(remoteNotes || []).filter((note) => !defaults.has(note.id)),
+  ];
+}
+
 function isSampleQuiz(quiz) {
   return quiz.id.startsWith("sample-");
 }
@@ -279,6 +399,9 @@ function App() {
   const [profile, setProfile] = useState(() => read(STORAGE.profile, { name: "匿名ユーザー", createdCount: 0, solvedCount: 0, challengeCount: 0 }));
   const [classProfiles, setClassProfiles] = useState(() => read(STORAGE.classProfiles, {}));
   const [comments, setComments] = useState(() => read(STORAGE.comments, sampleComments));
+  const [updateNotes, setUpdateNotes] = useState(() =>
+    withDefaultUpdateNotes(read(STORAGE.updateNotes, []))
+  );
   const [classes, setClasses] = useState(() => read(STORAGE.classes, []));
   const [membership, setMembership] = useState(() =>
     getScreenFromHash() === "role" ? null : read(STORAGE.membership, null)
@@ -298,6 +421,7 @@ function App() {
   useEffect(() => localStorage.setItem(STORAGE.profile, JSON.stringify(profile)), [profile]);
   useEffect(() => localStorage.setItem(STORAGE.classProfiles, JSON.stringify(classProfiles)), [classProfiles]);
   useEffect(() => localStorage.setItem(STORAGE.comments, JSON.stringify(comments)), [comments]);
+  useEffect(() => localStorage.setItem(STORAGE.updateNotes, JSON.stringify(updateNotes)), [updateNotes]);
   useEffect(() => localStorage.setItem(STORAGE.classes, JSON.stringify(classes)), [classes]);
   useEffect(() => {
     if (membership) localStorage.setItem(STORAGE.membership, JSON.stringify(membership));
@@ -371,6 +495,10 @@ function App() {
           ),
           subscribeComments(
             (remoteComments) => setComments([...sampleComments, ...remoteComments.filter((item) => item.id !== "c1" && item.id !== "c2")]),
+            () => setFirebaseStatus("error")
+          ),
+          subscribeUpdateNotes(
+            (remoteNotes) => setUpdateNotes(withDefaultUpdateNotes(remoteNotes)),
             () => setFirebaseStatus("error")
           )
         );
@@ -715,11 +843,11 @@ function App() {
   };
 
   const joinClass = async ({ code, nickname, userId }) => {
-    const normalized = code.trim().toUpperCase();
-    const classroom = classes.find((item) => item.code === normalized) || await findClassByCode(normalized);
+    const normalizedUserId = normalizeUserId(userId);
+    const classroom = await resolveClassForJoin(classes, code, normalizedUserId, "student");
     if (!classroom) return false;
-    const existing = userId ? findClassPerson(classroom, userId, "student") : null;
-    if (userId && !existing) return false;
+    const existing = normalizedUserId ? findClassPerson(classroom, normalizedUserId, "student") : null;
+    if (normalizedUserId && !existing) return false;
     const memberId = existing?.id || generateUniqueUserId(classroom, "student");
     const memberName = existing?.name || nickname;
     setProfile((current) => ({ ...current, name: memberName }));
@@ -742,12 +870,12 @@ function App() {
   };
 
   const joinClassAsTeacher = async ({ code, nickname, userId, password }) => {
-    const normalized = code.trim().toUpperCase();
-    const classroom = classes.find((item) => item.code === normalized) || await findClassByCode(normalized);
+    const normalizedUserId = normalizeUserId(userId);
+    const classroom = await resolveClassForJoin(classes, code, normalizedUserId, "teacher");
     if (!classroom) return false;
     if ((classroom.password || "") !== password) return false;
-    const existing = userId ? findClassPerson(classroom, userId, "teacher") : null;
-    if (userId && !existing) return false;
+    const existing = normalizedUserId ? findClassPerson(classroom, normalizedUserId, "teacher") : null;
+    if (normalizedUserId && !existing) return false;
     const teacherId = existing?.id || generateUniqueUserId(classroom, "teacher");
     const teacherName = existing?.name || nickname;
     setProfile((current) => ({ ...current, name: teacherName }));
@@ -800,6 +928,34 @@ function App() {
       classroom.id === activeClass.id ? updatedClassroom : classroom
     ));
     saveClass(updatedClassroom).catch(console.error);
+  };
+
+  const publishUpdateNote = async (draft) => {
+    const existing = updateNotes.find((note) => note.id === draft.id);
+    const now = new Date().toISOString();
+    const note = {
+      id: existing?.id || `update-${Date.now()}`,
+      version: draft.version.trim(),
+      category: draft.category,
+      title: draft.title.trim(),
+      body: draft.body.trim(),
+      author: "qpath 開発者",
+      publishedAt: existing?.publishedAt || now,
+      updatedAt: now,
+    };
+    setUpdateNotes((current) => [
+      note,
+      ...current.filter((item) => item.id !== note.id),
+    ]);
+    await waitForRemoteSave(saveUpdateNote(note));
+    return note;
+  };
+
+  const deletePublishedUpdateNote = (noteId) => {
+    const note = updateNotes.find((item) => item.id === noteId);
+    if (!note || note.isDefault) return;
+    setUpdateNotes((current) => current.filter((item) => item.id !== noteId));
+    removeUpdateNote(noteId).catch(console.error);
   };
 
   const resetRole = () => {
@@ -910,6 +1066,11 @@ function App() {
           editOwnQuiz,
           updateProfile: updateCurrentProfile,
         }),
+        screen === "updates" && h(DeveloperNotesScreen, {
+          notes: updateNotes,
+          publishNote: publishUpdateNote,
+          deleteNote: deletePublishedUpdateNote,
+        }),
         screen === "dashboard" && membership.role === "teacher" && h(TeacherDashboard, {
           activeClass,
           quizzes: classQuizzes,
@@ -952,7 +1113,7 @@ function RoleSetup({ createClass, joinClass, joinClassAsTeacher }) {
       setError("「はじめて入る」か「入ったことがある」を選んでください。");
       return;
     }
-    if (returning && userId.length !== 7) {
+    if (returning && !normalizeUserId(userId)) {
       setError(`利用者IDを確認してください。例：${role === "teacher" ? "T-ABCDE" : "S-ABCDE"}`);
       return;
     }
@@ -1143,51 +1304,52 @@ function RoleSetup({ createClass, joinClass, joinClassAsTeacher }) {
         )
       ),
       returning === null && h("p", { className: "join-mode-help" }, "まず、どちらかを選んでください。"),
-      field("クラスコード", h("input", {
-        className: "code-input",
-        value: joinCode,
-        onChange: (event) => {
-          setJoinCode(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6));
-          setError("");
+      returning !== null && h(React.Fragment, null,
+        field("クラスコード", h("input", {
+          className: "code-input",
+          value: joinCode,
+          onChange: (event) => {
+            setJoinCode(normalizeClassCode(event.target.value));
+            setError("");
+          },
+          placeholder: "ABC234",
+          maxLength: 6,
+          autoCapitalize: "characters",
+          required: true,
+        })),
+        returning && field("利用者ID", h("input", {
+          className: "code-input",
+          value: userId,
+          onChange: (event) => {
+            setUserId(normalizeUserId(event.target.value));
+            setError("");
+          },
+          placeholder: role === "teacher" ? "T-ABCDE" : "S-ABCDE",
+          maxLength: 40,
+          autoCapitalize: "characters",
+          required: true,
+        })),
+        role === "teacher" && field("クラスのパスワード", h("input", {
+          type: "password",
+          value: classPassword,
+          onChange: (event) => {
+            setClassPassword(event.target.value.slice(0, 32));
+            setError("");
+          },
+          placeholder: "先生用パスワード",
+          required: true,
+        })),
+        error && h("p", { className: "form-error" }, error),
+        h("button", {
+          className: "primary-button",
+          type: "submit",
+          disabled:
+            joinCode.length !== 6 ||
+            (returning && !normalizeUserId(userId)) ||
+            (role === "teacher" && !classPassword),
         },
-        placeholder: "ABC234",
-        maxLength: 6,
-        autoCapitalize: "characters",
-        required: true,
-      })),
-      returning && field("利用者ID", h("input", {
-        className: "code-input",
-        value: userId,
-        onChange: (event) => {
-          setUserId(event.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 7));
-          setError("");
-        },
-        placeholder: role === "teacher" ? "T-ABCDE" : "S-ABCDE",
-        maxLength: 7,
-        autoCapitalize: "characters",
-        required: true,
-      })),
-      role === "teacher" && field("クラスのパスワード", h("input", {
-        type: "password",
-        value: classPassword,
-        onChange: (event) => {
-          setClassPassword(event.target.value.slice(0, 32));
-          setError("");
-        },
-        placeholder: "先生用パスワード",
-        required: true,
-      })),
-      error && h("p", { className: "form-error" }, error),
-      h("button", {
-        className: "primary-button",
-        type: "submit",
-        disabled:
-          returning === null ||
-          joinCode.length !== 6 ||
-          (returning && userId.length !== 7) ||
-          (role === "teacher" && !classPassword),
-      },
-        role === "teacher" ? "教員として参加" : "クラスに参加"
+          role === "teacher" ? "教員として参加" : "クラスに参加"
+        )
       )
     )
   );
@@ -1413,6 +1575,208 @@ function HomeScreen({ setScreen, membership, activeClass }) {
       actions.map(([label, detail, Icon, target]) =>
         h("button", { className: "action-card", key: label, onClick: () => setScreen(target) },
           h(Icon, { size: 24 }), h("span", null, label), h("small", null, detail), h(ChevronRight, { size: 18 })
+        )
+      )
+    ),
+    h("button", { className: "developer-note-link", type: "button", onClick: () => setScreen("updates") },
+      h("div", { className: "developer-note-link-icon" }, h(FileText, { size: 21 })),
+      h("div", null,
+        h("strong", null, "開発者ノート"),
+        h("span", null, "β版のアップデートと改善内容")
+      ),
+      h(ChevronRight, { size: 19 })
+    )
+  );
+}
+
+function DeveloperNotesScreen({ notes, publishNote, deleteNote }) {
+  const emptyDraft = { id: "", version: "", category: "アップデート", title: "", body: "" };
+  const [isDeveloper, setIsDeveloper] = useState(
+    () => localStorage.getItem(STORAGE.developerAccess) === DEVELOPER_KEY_HASH
+  );
+  const [showUnlock, setShowUnlock] = useState(false);
+  const [developerKey, setDeveloperKey] = useState("");
+  const [accessMessage, setAccessMessage] = useState("");
+  const [draft, setDraft] = useState(emptyDraft);
+  const [saveMessage, setSaveMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+  const orderedNotes = useMemo(
+    () => [...notes].sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt)),
+    [notes]
+  );
+
+  const updateDraft = (key, value) => setDraft((current) => ({ ...current, [key]: value }));
+  const resetDraft = () => setDraft(emptyDraft);
+  const formatDate = (value) => {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+      ? ""
+      : new Intl.DateTimeFormat("ja-JP", { year: "numeric", month: "long", day: "numeric" }).format(date);
+  };
+
+  const unlockDeveloperMode = async (event) => {
+    event.preventDefault();
+    setAccessMessage("");
+    try {
+      const hashed = await hashDeveloperKey(developerKey.trim());
+      if (hashed !== DEVELOPER_KEY_HASH) {
+        setAccessMessage("開発者キーを確認してください。");
+        return;
+      }
+      localStorage.setItem(STORAGE.developerAccess, DEVELOPER_KEY_HASH);
+      setIsDeveloper(true);
+      setShowUnlock(false);
+      setDeveloperKey("");
+    } catch (error) {
+      setAccessMessage(error.message || "開発者キーを確認できませんでした。");
+    }
+  };
+
+  const lockDeveloperMode = () => {
+    localStorage.removeItem(STORAGE.developerAccess);
+    setIsDeveloper(false);
+    setShowUnlock(false);
+    resetDraft();
+  };
+
+  const submitNote = async (event) => {
+    event.preventDefault();
+    if (!draft.version.trim() || !draft.title.trim() || !draft.body.trim()) return;
+    setSaving(true);
+    setSaveMessage("");
+    await publishNote(draft);
+    setSaving(false);
+    setSaveMessage(draft.id ? "アップデートノートを更新しました。" : "アップデートノートを公開しました。");
+    resetDraft();
+  };
+
+  const editNote = (note) => {
+    setDraft({
+      id: note.id,
+      version: note.version || "",
+      category: note.category || "アップデート",
+      title: note.title || "",
+      body: note.body || "",
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  return h("section", { className: "screen update-screen" },
+    h(Header, {
+      eyebrow: "Beta update log",
+      title: "開発者ノート",
+      body: "qpath β版のアップデートと改善内容をお知らせします。",
+    }),
+    h("article", { className: "update-intro" },
+      h("div", null, h(Megaphone, { size: 22 })),
+      h("p", null, "みなさんの挑戦をもとに、学びやすさを少しずつ更新しています。")
+    ),
+    isDeveloper
+      ? h("section", { className: "developer-editor" },
+          h("div", { className: "developer-editor-heading" },
+            h("div", null, h("span", null, "Developer only"), h("h2", null, draft.id ? "ノートを編集" : "更新内容を投稿")),
+            h("button", {
+              type: "button",
+              className: "icon-text-button",
+              onClick: lockDeveloperMode,
+            }, h(LockKeyhole, { size: 16 }), "ロック")
+          ),
+          h("form", { onSubmit: submitNote },
+            field("バージョン", h("input", {
+              value: draft.version,
+              onChange: (event) => updateDraft("version", event.target.value.slice(0, 20)),
+              placeholder: "例：β 0.5",
+              maxLength: 20,
+              required: true,
+            })),
+            field("種類", h("select", {
+              value: draft.category,
+              onChange: (event) => updateDraft("category", event.target.value),
+            },
+              ["アップデート", "改善", "お知らせ", "メンテナンス"].map((category) =>
+                h("option", { key: category, value: category }, category)
+              )
+            )),
+            field("タイトル", h("input", {
+              value: draft.title,
+              onChange: (event) => updateDraft("title", event.target.value.slice(0, 60)),
+              placeholder: "更新内容のタイトル",
+              maxLength: 60,
+              required: true,
+            })),
+            field("本文", h("textarea", {
+              value: draft.body,
+              onChange: (event) => updateDraft("body", event.target.value.slice(0, 500)),
+              placeholder: "どこが変わったか、利用者に伝わる言葉で入力します。",
+              rows: 5,
+              maxLength: 500,
+              required: true,
+            })),
+            saveMessage && h("p", { className: "soft-message", role: "status" }, saveMessage),
+            h("div", { className: "developer-editor-actions" },
+              draft.id && h("button", { type: "button", className: "secondary-button", onClick: resetDraft }, "編集をやめる"),
+              h("button", {
+                type: "submit",
+                className: "primary-button",
+                disabled: saving || !draft.version.trim() || !draft.title.trim() || !draft.body.trim(),
+              }, h(Send, { size: 17 }), saving ? "保存中..." : draft.id ? "更新する" : "公開する")
+            )
+          )
+        )
+      : h("div", { className: "developer-access" },
+          showUnlock
+            ? h("form", { className: "developer-unlock-form", onSubmit: unlockDeveloperMode },
+                field("開発者キー", h("input", {
+                  type: "password",
+                  value: developerKey,
+                  onChange: (event) => {
+                    setDeveloperKey(event.target.value);
+                    setAccessMessage("");
+                  },
+                  autoComplete: "off",
+                  placeholder: "開発者キーを入力",
+                  required: true,
+                })),
+                accessMessage && h("p", { className: "form-error", role: "alert" }, accessMessage),
+                h("div", { className: "developer-editor-actions" },
+                  h("button", { type: "button", className: "secondary-button", onClick: () => setShowUnlock(false) }, "閉じる"),
+                  h("button", { type: "submit", className: "primary-button", disabled: !developerKey.trim() }, h(KeyRound, { size: 16 }), "開発者として開く")
+                )
+              )
+            : h("button", {
+                type: "button",
+                className: "developer-unlock-button",
+                onClick: () => setShowUnlock(true),
+              }, h(LockKeyhole, { size: 15 }), "開発者用")
+        ),
+    h("div", { className: "update-note-list" },
+      orderedNotes.map((note) =>
+        h("article", { className: "update-note-card", key: note.id },
+          h("div", { className: "update-note-meta" },
+            h("span", { className: `update-category ${note.category || "アップデート"}` }, note.category || "アップデート"),
+            h("strong", null, note.version || "β版")
+          ),
+          h("h2", null, note.title),
+          h("p", null, note.body),
+          h("footer", null,
+            h("time", { dateTime: note.publishedAt }, formatDate(note.publishedAt)),
+            isDeveloper && !note.isDefault && h("div", { className: "update-note-actions" },
+              h("button", {
+                type: "button",
+                onClick: () => editNote(note),
+                title: "このノートを編集",
+                "aria-label": `${note.title}を編集`,
+              }, h(Edit3, { size: 16 })),
+              h("button", {
+                type: "button",
+                onClick: () => {
+                  if (window.confirm("このアップデートノートを削除しますか？")) deleteNote(note.id);
+                },
+                title: "このノートを削除",
+                "aria-label": `${note.title}を削除`,
+              }, h(Trash2, { size: 16 }))
+            )
+          )
         )
       )
     )
