@@ -44,7 +44,7 @@ import {
   subscribeComments,
   subscribeQuizzes,
   subscribeUpdateNotes,
-} from "./firebase.js";
+} from "./firebase.js?v=20260805-talk-profile";
 
 const h = React.createElement;
 const APP_SCREENS = new Set(["role", "home", "profile", "quizzes", "answer", "create", "study", "dashboard", "edit", "updates"]);
@@ -202,6 +202,24 @@ function findClassPerson(classroom, userId, role) {
   return getClassroomPeople(classroom).find((person) =>
     normalizeUserId(person.id) === normalized && (!role || person.role === role)
   );
+}
+
+function getTalkIdentity(entry, classroom) {
+  const linkedPerson = entry?.authorId ? findClassPerson(classroom, entry.authorId) : null;
+  const linkedName = String(linkedPerson?.name || "").trim();
+  const storedName = String(entry?.author || "").trim();
+  const name = [linkedName, storedName].find((value) => value && value !== "匿名ユーザー")
+    || linkedName
+    || storedName
+    || "匿名ユーザー";
+  const color = linkedPerson?.avatarColor || entry?.authorAvatarColor;
+  return {
+    name,
+    initial: name === "匿名ユーザー" ? "匿" : (Array.from(name)[0] || "匿"),
+    bio: normalizeBio(linkedPerson?.bio || entry?.authorBio),
+    role: linkedPerson?.role || entry?.authorRole || "",
+    avatarColor: AVATAR_COLORS.includes(color) ? color : pickAvatarColor(entry?.authorId || name),
+  };
 }
 
 function generateUniqueUserId(classroom, role) {
@@ -664,13 +682,22 @@ function App() {
   useEffect(() => {
     if (!membership?.classId || !membership.userId || !activeClass) return;
     const role = membership.role === "teacher" ? "teacher" : "student";
-    if (findClassPerson(activeClass, membership.userId, role)) return;
+    const existing = findClassPerson(activeClass, membership.userId, role);
     const person = {
+      ...existing,
       id: membership.userId,
       name: activeClassProfile?.name || profile.name || "匿名ユーザー",
+      bio: normalizeBio(activeClassProfile?.bio),
+      avatarColor: activeClassProfile?.avatarColor || pickAvatarColor(membership.userId),
       role,
-      joinedAt: new Date().toISOString(),
+      joinedAt: existing?.joinedAt || new Date().toISOString(),
     };
+    if (
+      existing
+      && existing.name === person.name
+      && normalizeBio(existing.bio) === person.bio
+      && existing.avatarColor === person.avatarColor
+    ) return;
     const updatedClassroom = upsertClassPerson(activeClass, person);
     setClasses((current) => current.map((classroom) => classroom.id === activeClass.id ? updatedClassroom : classroom));
     saveClass(updatedClassroom).catch(console.error);
@@ -682,7 +709,7 @@ function App() {
         role,
       }),
     }));
-  }, [membership?.classId, membership?.role, membership?.userId, activeClass?.id, activeClassProfile?.name, profile.name]);
+  }, [membership?.classId, membership?.role, membership?.userId, activeClass?.id, activeClassProfile?.name, activeClassProfile?.bio, activeClassProfile?.avatarColor, profile.name]);
 
   const updateClassProfile = (updater, targetKey = activeProfileKey) => {
     if (!targetKey) return;
@@ -904,24 +931,38 @@ function App() {
 
   const updateCurrentProfile = (changes) => {
     const nextName = changes.name?.trim();
+    const resolvedName = nextName || activeClassProfile?.name || profile.name || "匿名ユーザー";
+    const resolvedBio = Object.prototype.hasOwnProperty.call(changes, "bio")
+      ? normalizeBio(changes.bio)
+      : normalizeBio(activeClassProfile?.bio);
+    const requestedColor = changes.avatarColor || activeClassProfile?.avatarColor;
+    const resolvedAvatarColor = AVATAR_COLORS.includes(requestedColor)
+      ? requestedColor
+      : pickAvatarColor(membership?.userId);
     setProfile((current) => ({
       ...current,
       ...changes,
       name: nextName || current.name,
+      bio: resolvedBio,
+      avatarColor: resolvedAvatarColor,
     }));
     updateClassProfile((current) => ({
       ...current,
       ...changes,
       name: nextName || current.name,
+      bio: resolvedBio,
+      avatarColor: resolvedAvatarColor,
     }));
 
-    if (!nextName || !activeClass || !membership?.userId) return;
+    if (!activeClass || !membership?.userId) return;
     const role = membership.role === "teacher" ? "teacher" : "student";
     const existing = findClassPerson(activeClass, membership.userId, role);
     const updatedClassroom = upsertClassPerson(activeClass, {
       ...existing,
       id: membership.userId,
-      name: nextName,
+      name: resolvedName,
+      bio: resolvedBio,
+      avatarColor: resolvedAvatarColor,
       role,
       joinedAt: existing?.joinedAt || new Date().toISOString(),
     });
@@ -1009,11 +1050,15 @@ function App() {
         }),
         screen === "study" && h(StudyScreen, {
           comments: classComments,
+          activeClass,
           addComment: (text) => {
             const comment = {
               id: `comment-${Date.now()}`,
               author: activeClassProfile?.name || profile.name,
               authorId: membership.userId,
+              authorBio: normalizeBio(activeClassProfile?.bio),
+              authorRole: membership.role,
+              authorAvatarColor: activeClassProfile?.avatarColor || pickAvatarColor(membership.userId),
               text,
               classId: membership.classId,
               reactions: { "😊": 0, "🥰": 0, "🫡": 0, "😯": 0 },
@@ -1033,6 +1078,9 @@ function App() {
                     id: `reply-${Date.now()}`,
                     author: activeClassProfile?.name || profile.name,
                     authorId: membership.userId,
+                    authorBio: normalizeBio(activeClassProfile?.bio),
+                    authorRole: membership.role,
+                    authorAvatarColor: activeClassProfile?.avatarColor || pickAvatarColor(membership.userId),
                     text,
                     createdAt: new Date().toISOString(),
                   },
@@ -2025,9 +2073,65 @@ function field(label, control) {
   return h("label", null, label, control);
 }
 
-function StudyScreen({ comments, addComment: onAddComment, addReply, reactToComment }) {
+function TalkProfileTrigger({ identity, profileKey, isOpen, setOpenProfileKey, compact = false }) {
+  const roleLabel = identity.role === "teacher" ? "教員" : identity.role === "student" ? "生徒" : "クラスメンバー";
+  return h("div", {
+    className: "talk-profile-anchor",
+    onMouseEnter: () => setOpenProfileKey(profileKey),
+    onMouseLeave: () => setOpenProfileKey((current) => current === profileKey ? "" : current),
+    onBlur: (event) => {
+      if (!event.currentTarget.contains(event.relatedTarget)) {
+        setOpenProfileKey((current) => current === profileKey ? "" : current);
+      }
+    },
+  },
+    h("button", {
+      type: "button",
+      className: compact ? "talk-profile-trigger compact" : "talk-profile-trigger",
+      onClick: () => setOpenProfileKey(profileKey),
+      onFocus: () => setOpenProfileKey(profileKey),
+      "aria-expanded": isOpen,
+      "aria-label": `${identity.name}のプロフィールを見る`,
+    },
+      h("div", {
+        className: compact ? "avatar reply-avatar" : "avatar",
+        style: { background: identity.avatarColor },
+        "aria-hidden": "true",
+      }, identity.initial),
+      h("strong", null, identity.name)
+    ),
+    isOpen && h("aside", {
+      className: "talk-profile-popover",
+      role: "dialog",
+      "aria-label": `${identity.name}のプロフィール`,
+    },
+      h("div", { className: "talk-profile-popover-header" },
+        h("div", {
+          className: "avatar talk-profile-popover-avatar",
+          style: { background: identity.avatarColor },
+          "aria-hidden": "true",
+        }, identity.initial),
+        h("div", null,
+          h("strong", null, identity.name),
+          h("span", { className: "talk-profile-role" }, roleLabel)
+        )
+      ),
+      h("p", null, identity.bio || "一言はまだ設定されていません")
+    )
+  );
+}
+
+function StudyScreen({ comments, activeClass, addComment: onAddComment, addReply, reactToComment }) {
   const [text, setText] = useState("");
   const [replyDrafts, setReplyDrafts] = useState({});
+  const [openProfileKey, setOpenProfileKey] = useState("");
+  useEffect(() => {
+    const closeProfile = (event) => {
+      if (!event.target?.closest?.(".talk-profile-anchor")) setOpenProfileKey("");
+    };
+    document.addEventListener("pointerdown", closeProfile);
+    return () => document.removeEventListener("pointerdown", closeProfile);
+  }, []);
   const submitComment = () => {
     if (!text.trim()) return;
     onAddComment(text.trim());
@@ -2047,9 +2151,16 @@ function StudyScreen({ comments, addComment: onAddComment, addReply, reactToComm
       h("button", { className: "primary-button", onClick: submitComment }, h(Send, { size: 17 }), "投稿")
     ),
     h("div", { className: "comment-list" },
-      comments.map((comment) =>
-        h("article", { className: "comment-card", key: comment.id },
-          h("div", { className: "avatar-row" }, h("div", { className: "avatar" }, "匿"), h("strong", null, comment.author)),
+      comments.map((comment) => {
+        const commentAuthor = getTalkIdentity(comment, activeClass);
+        const commentProfileKey = `comment:${comment.id}`;
+        return h("article", { className: "comment-card", key: comment.id },
+          h(TalkProfileTrigger, {
+            identity: commentAuthor,
+            profileKey: commentProfileKey,
+            isOpen: openProfileKey === commentProfileKey,
+            setOpenProfileKey,
+          }),
           h("p", null, comment.text),
           h("div", { className: "reaction-row" },
             reactionChoices.map((reaction) => h("button", {
@@ -2059,10 +2170,20 @@ function StudyScreen({ comments, addComment: onAddComment, addReply, reactToComm
             }, `${reaction} ${(comment.reactions || {})[reaction] || 0}`))
           ),
           (comment.replies || []).length > 0 && h("div", { className: "reply-list" },
-            (comment.replies || []).map((reply) => h("div", { className: "reply-card", key: reply.id },
-              h("strong", null, reply.author),
-              h("p", null, reply.text)
-            ))
+            (comment.replies || []).map((reply) => {
+              const replyAuthor = getTalkIdentity(reply, activeClass);
+              const replyProfileKey = `reply:${comment.id}:${reply.id}`;
+              return h("div", { className: "reply-card", key: reply.id },
+                h(TalkProfileTrigger, {
+                  identity: replyAuthor,
+                  profileKey: replyProfileKey,
+                  isOpen: openProfileKey === replyProfileKey,
+                  setOpenProfileKey,
+                  compact: true,
+                }),
+                h("p", null, reply.text)
+              );
+            })
           ),
           h("div", { className: "reply-box" },
             h("input", {
@@ -2072,8 +2193,8 @@ function StudyScreen({ comments, addComment: onAddComment, addReply, reactToComm
             }),
             h("button", { type: "button", onClick: () => submitReply(comment.id) }, h(Send, { size: 15 }))
           )
-        )
-      )
+        );
+      })
     )
   );
 }
