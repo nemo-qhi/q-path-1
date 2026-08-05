@@ -12,6 +12,7 @@ import {
   FileText,
   GraduationCap,
   Heart,
+  House,
   KeyRound,
   Lightbulb,
   LockKeyhole,
@@ -1571,13 +1572,6 @@ function HomeScreen({ setScreen, membership, activeClass }) {
       h("div", null, h("strong", null, "今日の合言葉"), h("p", null, "挑戦したことが学びです。ここから理解が深まります。")),
       h(Lightbulb, { size: 36 })
     ),
-    h("div", { className: "action-grid" },
-      actions.map(([label, detail, Icon, target]) =>
-        h("button", { className: "action-card", key: label, onClick: () => setScreen(target) },
-          h(Icon, { size: 24 }), h("span", null, label), h("small", null, detail), h(ChevronRight, { size: 18 })
-        )
-      )
-    ),
     h("button", { className: "developer-note-link", type: "button", onClick: () => setScreen("updates") },
       h("div", { className: "developer-note-link-icon" }, h(FileText, { size: 21 })),
       h("div", null,
@@ -1585,6 +1579,13 @@ function HomeScreen({ setScreen, membership, activeClass }) {
         h("span", null, "β版のアップデートと改善内容")
       ),
       h(ChevronRight, { size: 19 })
+    ),
+    h("div", { className: "action-grid" },
+      actions.map(([label, detail, Icon, target]) =>
+        h("button", { className: "action-card", key: label, onClick: () => setScreen(target) },
+          h(Icon, { size: 24 }), h("span", null, label), h("small", null, detail), h(ChevronRight, { size: 18 })
+        )
+      )
     )
   );
 }
@@ -2256,6 +2257,7 @@ function BottomNav({ current, setScreen }) {
   const items = [
     ["profile", "プロフィール", CircleUserRound],
     ["quizzes", "クイズ", BookOpen],
+    ["home", "ホーム", House],
     ["study", "トーク", MessageCircle],
     ["create", "作問", PencilLine],
   ];

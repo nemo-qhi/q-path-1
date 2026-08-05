@@ -1830,8 +1830,8 @@ select:focus {
   z-index: 10;
   width: min(calc(100% - 24px), 500px);
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
   padding: 8px;
   border: 1px solid #cce8f8;
   border-radius: 24px;
@@ -1842,10 +1842,12 @@ select:focus {
 }
 
 .bottom-nav button {
+  min-width: 0;
   min-height: 58px;
   display: grid;
   place-items: center;
   gap: 3px;
+  padding: 0 2px;
   color: #668397;
   border-radius: 18px;
   background: transparent;
@@ -1856,6 +1858,13 @@ select:focus {
 .bottom-nav button.active {
   color: #0874b9;
   background: #e2f4ff;
+}
+
+.bottom-nav span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (min-width: 680px) {
@@ -1880,6 +1889,6 @@ select:focus {
   }
 
   .bottom-nav span {
-    font-size: 0.68rem;
+    font-size: 0.6rem;
   }
 }
