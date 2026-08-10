@@ -1908,11 +1908,23 @@ function DeveloperNotesScreen({ notes, publishNote, deleteNote }) {
 }
 
 function QuizList({ quizzes, openQuiz, message, clearMessage, developerMode = false, deleteQuiz }) {
+  const [practiceMode, setPracticeMode] = useState(developerMode ? "manage" : "");
   const [selectedSubject, setSelectedSubject] = useState("");
   const subjectGroups = useMemo(() => getSubjectGroups(quizzes), [quizzes]);
-  const visibleQuizzes = selectedSubject
+  const subjectQuizzes = selectedSubject
     ? quizzes.filter((quiz) => quiz.subject === selectedSubject)
-    : quizzes;
+    : [];
+  const visibleQuizzes = developerMode || practiceMode === "all"
+    ? quizzes
+    : practiceMode === "subject"
+      ? subjectQuizzes
+      : [];
+
+  const startQuizPool = (quizPool) => {
+    if (!quizPool.length) return;
+    openQuiz(quizPool[0].id, quizPool);
+  };
+
   useEffect(() => {
     if (selectedSubject && !subjectGroups.some((group) => group.subject === selectedSubject)) {
       setSelectedSubject("");
@@ -1922,12 +1934,10 @@ function QuizList({ quizzes, openQuiz, message, clearMessage, developerMode = fa
   return h("section", { className: "screen" },
     h(Header, {
       eyebrow: developerMode ? "Developer management" : "Quiz",
-      title: "クイズ一覧",
+      title: developerMode ? "クイズ一覧" : "問題を解く",
       body: developerMode
         ? "開発者管理モードです。このクラスで作成された問題を確認・削除できます。"
-        : selectedSubject
-        ? `${selectedSubject}の問題群だけで挑戦できます。`
-        : "教科ごとの問題群を選んで、まずは一問だけ挑戦。"
+        : "全体から回すか、科目を絞って回すかを選べます。"
     }),
     developerMode && h("div", { className: "developer-mode-notice", role: "status" },
       h(LockKeyhole, { size: 18 }),
@@ -1935,22 +1945,79 @@ function QuizList({ quizzes, openQuiz, message, clearMessage, developerMode = fa
       h("small", null, "削除した問題は元に戻せません")
     ),
     message && h("button", { className: "notice", onClick: clearMessage }, h(CheckCircle2, { size: 18 }), message),
-    h("div", { className: "subject-filter", "aria-label": "教科で問題群を選ぶ" },
-      h("button", {
-        className: `subject-filter-button ${selectedSubject === "" ? "active" : ""}`,
-        type: "button",
-        onClick: () => setSelectedSubject(""),
-      }, `すべて ${quizzes.length}`),
-      subjectGroups.map((group) =>
+    !developerMode && h("section", { className: "quiz-mode-card", "aria-labelledby": "quiz-mode-title" },
+      h("div", { className: "quiz-mode-heading" },
+        h("span", null, "出題範囲"),
+        h("h2", { id: "quiz-mode-title" }, "どの問題を回しますか？")
+      ),
+      h("div", { className: "quiz-mode-selector" },
         h("button", {
-          className: `subject-filter-button ${selectedSubject === group.subject ? "active" : ""}`,
+          className: `quiz-mode-choice ${practiceMode === "all" ? "selected" : ""}`,
           type: "button",
-          key: group.subject,
-          onClick: () => setSelectedSubject(group.subject),
-        }, `${group.subject} ${group.count}`)
+          disabled: quizzes.length === 0,
+          "aria-pressed": practiceMode === "all",
+          onClick: () => {
+            setPracticeMode("all");
+            setSelectedSubject("");
+          },
+        },
+          h(Sparkles, { size: 21 }),
+          h("span", null, "全体から回す"),
+          h("small", null, `${quizzes.length}問から挑戦`)
+        ),
+        h("button", {
+          className: `quiz-mode-choice ${practiceMode === "subject" ? "selected" : ""}`,
+          type: "button",
+          disabled: subjectGroups.length === 0,
+          "aria-pressed": practiceMode === "subject",
+          onClick: () => {
+            setPracticeMode("subject");
+            setSelectedSubject("");
+          },
+        },
+          h(BookOpen, { size: 21 }),
+          h("span", null, "科目ごとに回す"),
+          h("small", null, "科目を選んで挑戦")
+        )
+      ),
+      practiceMode === "all" && h("div", { className: "quiz-mode-start" },
+        h("p", null, `このクラスの${quizzes.length}問を順番に回します。`),
+        h("button", {
+          className: "primary-button",
+          type: "button",
+          disabled: quizzes.length === 0,
+          onClick: () => startQuizPool(quizzes),
+        }, h(Sparkles, { size: 18 }), "全体から挑戦を始める")
+      ),
+      practiceMode === "subject" && h(React.Fragment, null,
+        h("p", { className: "quiz-subject-prompt" }, "挑戦する科目を選んでください。"),
+        h("div", { className: "subject-filter", "aria-label": "挑戦する科目を選ぶ" },
+          subjectGroups.map((group) =>
+            h("button", {
+              className: `subject-filter-button ${selectedSubject === group.subject ? "active" : ""}`,
+              type: "button",
+              key: group.subject,
+              "aria-pressed": selectedSubject === group.subject,
+              onClick: () => setSelectedSubject(group.subject),
+            }, `${group.subject} ${group.count}`)
+          )
+        ),
+        selectedSubject && h("div", { className: "quiz-mode-start" },
+          h("p", null, `${selectedSubject}の${subjectQuizzes.length}問を順番に回します。`),
+          h("button", {
+            className: "primary-button",
+            type: "button",
+            disabled: subjectQuizzes.length === 0,
+            onClick: () => startQuizPool(subjectQuizzes),
+          }, h(BookOpen, { size: 18 }), `${selectedSubject}から挑戦を始める`)
+        )
       )
     ),
-    h("div", { className: "quiz-list" },
+    (developerMode || practiceMode === "all" || (practiceMode === "subject" && selectedSubject)) && h("div", { className: "quiz-list" },
+      !developerMode && h("div", { className: "quiz-list-heading" },
+        h("span", null, "問題一覧"),
+        h("strong", null, practiceMode === "all" ? `全体 ${visibleQuizzes.length}問` : `${selectedSubject} ${visibleQuizzes.length}問`)
+      ),
       visibleQuizzes.length === 0 && h("article", { className: "empty-card" },
         h("strong", null, "この問題群にはまだクイズがありません"),
         h("p", null, "作問も大切な学びです。最初の一問を作ってみましょう。")
