@@ -1,25 +1,1669 @@
 <!doctype html>
 <html lang="ja">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>qpath</title>
-    <link rel="stylesheet" href="./src/styles.css?v=20260810-quiz-scope-r5" />
-    <script type="importmap">
-      {
-        "imports": {
-          "react": "./vendor/react.mjs",
-          "react-dom/client": "./vendor/react-dom-client.mjs",
-          "lucide-react": "./vendor/lucide-react.mjs",
-          "firebase/app": "./vendor/firebase-app.js",
-          "firebase/auth": "./vendor/firebase-auth.js",
-          "firebase/firestore": "./vendor/firebase-firestore.js"
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My単語</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4f0e8;
+        --paper: #fdfbf8;
+        --mist: #f6f3ee;
+        --ink: #1f2428;
+        --muted: #63706c;
+        --line: #d8d0c4;
+        --line-strong: #cfc5b6;
+        --green: #263f3b;
+        --green-soft: #e6efeb;
+        --amber: #8a642d;
+        --red: #8a352a;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-width: 980px;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, "Yu Gothic", "Hiragino Sans", Meiryo, Arial,
+          Helvetica, sans-serif;
+      }
+
+      button,
+      input,
+      select,
+      textarea {
+        border-radius: 0;
+        font: inherit;
+      }
+
+      button {
+        cursor: pointer;
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      textarea:focus-visible {
+        outline: 3px solid #8fb3aa;
+        outline-offset: 2px;
+      }
+
+      .top {
+        border-bottom: 1px solid var(--line);
+        background: var(--paper);
+      }
+
+      .app-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        width: min(1320px, calc(100vw - 48px));
+        margin: 0 auto;
+        padding: 16px 0;
+      }
+
+      .title-cluster {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+      }
+
+      .brand {
+        margin: 0;
+        color: var(--ink);
+        font-size: 30px;
+        font-weight: 800;
+      }
+
+      .app-mode {
+        border-left: 1px solid var(--line-strong);
+        color: #47605d;
+        font-size: 14px;
+        font-weight: 800;
+        padding-left: 12px;
+      }
+
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(112px, 132px));
+        gap: 10px;
+      }
+
+      .stat,
+      .panel,
+      .word,
+      .review-card {
+        border: 1px solid var(--line);
+        background: white;
+      }
+
+      .stat {
+        padding: 11px 12px;
+      }
+
+      .stat span {
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .stat strong {
+        display: block;
+        margin-top: 4px;
+        font-size: 24px;
+      }
+
+      .form-panel {
+        border: 1px solid var(--line-strong);
+        background: white;
+        padding: 16px;
+      }
+
+      .form-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+
+      .form-head h2,
+      .section-title h2 {
+        margin: 0;
+        font-size: 20px;
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        font-size: 14px;
+        font-weight: 800;
+      }
+
+      input,
+      select,
+      textarea {
+        width: 100%;
+        border: 1px solid var(--line-strong);
+        background: white;
+        color: var(--ink);
+        font-weight: 400;
+        outline: none;
+      }
+
+      input,
+      select {
+        height: 44px;
+        padding: 0 12px;
+      }
+
+      textarea {
+        min-height: 78px;
+        resize: vertical;
+        padding: 10px 12px;
+      }
+
+      .form-grid {
+        display: grid;
+        gap: 12px;
+      }
+
+      .two {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .tag-row {
+        display: grid;
+        grid-template-columns: 1fr 150px;
+        gap: 12px;
+      }
+
+      .primary {
+        height: 44px;
+        border: 0;
+        background: var(--green);
+        color: white;
+        font-weight: 800;
+      }
+
+      .ghost,
+      .tag,
+      .level,
+      .data-button {
+        border: 1px solid var(--line-strong);
+        background: white;
+        color: #43514e;
+        font-weight: 800;
+      }
+
+      .ghost {
+        height: 36px;
+        padding: 0 12px;
+        font-size: 14px;
+      }
+
+      .shell {
+        display: grid;
+        grid-template-columns: clamp(300px, 28vw, 360px) minmax(0, 1fr);
+        gap: 20px;
+        width: min(1320px, calc(100vw - 48px));
+        margin: 0 auto;
+        padding: 20px 0 36px;
+      }
+
+      aside {
+        display: grid;
+        align-content: start;
+        gap: 16px;
+      }
+
+      .panel {
+        background: var(--paper);
+        padding: 16px;
+      }
+
+      .panel h2 {
+        margin: 0 0 12px;
+        color: #43514e;
+        font-size: 14px;
+      }
+
+      .tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .choice-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .tag {
+        min-height: 36px;
+        padding: 7px 11px;
+        font-size: 14px;
+      }
+
+      .tag.active,
+      .level.active,
+      .choice.active {
+        border-color: var(--green);
+        background: var(--green);
+        color: white;
+      }
+
+      .choice {
+        min-height: 36px;
+        border: 1px solid var(--line-strong);
+        background: white;
+        color: #43514e;
+        padding: 7px 11px;
+        font-size: 14px;
+        font-weight: 800;
+      }
+
+      .data-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .theme-grid {
+        display: grid;
+        gap: 10px;
+      }
+
+      .swatches {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 8px;
+      }
+
+      .swatch {
+        height: 34px;
+        border: 1px solid var(--line-strong);
+        background: var(--swatch);
+      }
+
+      .swatch.active {
+        border: 3px solid var(--green);
+      }
+
+      .data-button {
+        height: 40px;
+        font-size: 14px;
+      }
+
+      .content {
+        display: grid;
+        gap: 20px;
+      }
+
+      .deck {
+        border: 1px solid var(--line);
+        background: var(--paper);
+        padding: 18px;
+      }
+
+      .section-title {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .section-title span {
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .deck-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 14px;
+      }
+
+      .deck-controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .deck-button {
+        height: 38px;
+        min-width: 42px;
+        border: 1px solid var(--line-strong);
+        background: white;
+        color: #43514e;
+        font-weight: 900;
+      }
+
+      .deck-button:disabled,
+      .deck-actions button:disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
+      }
+
+      .deck-count {
+        min-width: 74px;
+        color: var(--muted);
+        font-size: 14px;
+        font-weight: 800;
+        text-align: center;
+      }
+
+      .deck-stage {
+        min-height: clamp(300px, 33vw, 360px);
+        perspective: 1400px;
+      }
+
+      .flash-card {
+        position: relative;
+        height: clamp(300px, 33vw, 360px);
+        width: 100%;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        padding: 0;
+        text-align: left;
+      }
+
+      .flash-inner {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        transform-style: preserve-3d;
+        transition: transform 260ms ease;
+      }
+
+      .flash-card.flipped .flash-inner {
+        transform: rotateY(180deg);
+      }
+
+      .flash-face {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        align-content: space-between;
+        border: 1px solid var(--line-strong);
+        background:
+          linear-gradient(90deg, rgba(38, 63, 59, 0.1) 0 14px, transparent 14px),
+          white;
+        backface-visibility: hidden;
+        box-shadow: 0 22px 42px rgba(42, 35, 25, 0.1);
+        padding: clamp(24px, 2.5vw, 32px) clamp(24px, 2.5vw, 34px)
+          clamp(22px, 2.2vw, 28px) clamp(38px, 3vw, 46px);
+      }
+
+      .flash-face.back {
+        transform: rotateY(180deg);
+      }
+
+      .card-kicker {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 900;
+      }
+
+      .card-term {
+        margin: 34px 0;
+        font-size: clamp(42px, 4.4vw, 58px);
+        line-height: 1.05;
+        letter-spacing: 0;
+        word-break: break-word;
+      }
+
+      .card-meaning {
+        margin: 20px 0;
+        color: var(--ink);
+        font-size: clamp(22px, 2.1vw, 28px);
+        font-weight: 800;
+        line-height: 1.45;
+      }
+
+      .card-detail {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        color: #46524f;
+        font-size: 14px;
+        line-height: 1.65;
+      }
+
+      .word-relations {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .relation-box {
+        border: 1px solid var(--line);
+        background: var(--paper);
+        padding: 10px;
+      }
+
+      .relation-box strong {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 12px;
+      }
+
+      .card-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .card-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .flip-hint {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .deck-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .deck-actions button {
+        height: 38px;
+        flex: 1;
+        border: 1px solid var(--line-strong);
+        background: white;
+        color: #43514e;
+        font-weight: 800;
+      }
+
+      .deck-empty {
+        display: grid;
+        min-height: clamp(300px, 33vw, 360px);
+        place-items: center;
+        border: 1px dashed var(--line-strong);
+        background: white;
+        color: var(--muted);
+        font-weight: 800;
+      }
+
+      .review-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .review-card {
+        padding: 16px;
+      }
+
+      .review-card h3,
+      .word h3 {
+        margin: 0;
+        letter-spacing: 0;
+      }
+
+      .review-card p,
+      .word p {
+        color: #46524f;
+        line-height: 1.7;
+      }
+
+      .review-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .review-actions button {
+        flex: 1;
+        height: 36px;
+        border: 1px solid var(--line-strong);
+        background: var(--mist);
+        font-weight: 800;
+      }
+
+      .word-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .word {
+        padding: 16px;
+      }
+
+      .word-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .word-title {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .word-title h3 {
+        font-size: 26px;
+      }
+
+      .badge {
+        border: 1px solid var(--line);
+        color: var(--amber);
+        font-size: 12px;
+        font-weight: 800;
+        padding: 4px 8px;
+      }
+
+      .date {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .actions {
+        display: flex;
+        flex-shrink: 0;
+        gap: 8px;
+      }
+
+      .danger {
+        border-color: #d4aaa0;
+        color: var(--red);
+      }
+
+      .meta {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-top: 14px;
+        color: #46524f;
+        font-size: 14px;
+      }
+
+      .meta p {
+        margin-bottom: 0;
+      }
+
+      .word-foot {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        margin-top: 16px;
+      }
+
+      .levels {
+        display: flex;
+        gap: 4px;
+        margin-left: auto;
+      }
+
+      .level {
+        width: 32px;
+        height: 32px;
+      }
+
+      .empty {
+        border: 1px solid var(--line);
+        background: white;
+        color: var(--muted);
+        padding: 18px;
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      @media (max-width: 1120px) {
+        .app-header {
+          gap: 16px;
+        }
+
+        .stats {
+          grid-template-columns: repeat(3, 104px);
+        }
+
+        .stat {
+          padding: 10px;
+        }
+
+        .stat span {
+          font-size: 12px;
+        }
+
+        .shell {
+          grid-template-columns: 292px minmax(0, 1fr);
+          gap: 16px;
+        }
+
+        .two,
+        .word-relations,
+        .card-detail,
+        .meta {
+          grid-template-columns: 1fr;
+        }
+
+        .deck-toolbar {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .deck-controls {
+          width: 100%;
+        }
+
+        .deck-count {
+          margin-left: auto;
+        }
+
+        .deck-actions button {
+          font-size: 13px;
         }
       }
-    </script>
+
+    </style>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="./src/app.js?v=20260810-quiz-scope-r5"></script>
+    <main>
+      <section class="top">
+        <div class="app-header">
+          <div class="title-cluster">
+            <h1 class="brand">My単語</h1>
+            <span class="app-mode">単語帳</span>
+          </div>
+          <div class="stats">
+            <div class="stat">
+              <span>登録済み</span>
+              <strong id="total-count">0</strong>
+            </div>
+            <div class="stat">
+              <span>復習候補</span>
+              <strong id="review-count">0</strong>
+            </div>
+            <div class="stat">
+              <span>理解済み</span>
+              <strong id="learned-count">0</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="shell">
+        <aside>
+          <form id="word-form" class="form-panel">
+            <div class="form-head">
+              <h2 id="form-title">単語を追加</h2>
+              <button id="cancel-edit" class="ghost hidden" type="button">
+                取消
+              </button>
+            </div>
+            <div class="form-grid">
+              <label>
+                単語
+                <input id="term" required />
+              </label>
+              <label>
+                意味
+                <textarea id="meaning" required></textarea>
+              </label>
+              <div class="two">
+                <label>
+                  品詞
+                  <select id="part-of-speech">
+                    <option value="">未選択</option>
+                    <option value="名詞">名詞</option>
+                    <option value="代名詞">代名詞</option>
+                    <option value="自動詞">自動詞</option>
+                    <option value="他動詞">他動詞</option>
+                    <option value="形容詞">形容詞</option>
+                    <option value="副詞">副詞</option>
+                    <option value="前置詞">前置詞</option>
+                    <option value="接続詞">接続詞</option>
+                    <option value="冠詞">冠詞</option>
+                  </select>
+                </label>
+                <label>
+                  理解度
+                  <select id="confidence">
+                    <option value="1">1 まだ曖昧</option>
+                    <option value="2" selected>2 復習する</option>
+                    <option value="3">3 ふつう</option>
+                    <option value="4">4 だいたいOK</option>
+                    <option value="5">5 定着</option>
+                  </select>
+                </label>
+              </div>
+              <div class="two">
+                <label>
+                  見つけた場面
+                  <input id="context" />
+                </label>
+                <label>
+                  出典
+                  <input id="source" />
+                </label>
+              </div>
+              <label>
+                例文
+                <input id="example" />
+              </label>
+              <div class="two">
+                <label>
+                  同義語
+                  <input id="synonyms" placeholder="カンマ区切りで入力" />
+                </label>
+                <label>
+                  対義語
+                  <input id="antonyms" placeholder="カンマ区切りで入力" />
+                </label>
+              </div>
+              <div>
+                <label>
+                  タグ
+                  <input id="tags" placeholder="カンマ区切りで入力" />
+                </label>
+              </div>
+              <button id="submit-label" class="primary" type="submit">
+                追加
+              </button>
+            </div>
+          </form>
+          <div class="panel">
+            <label>
+              検索
+              <input id="query" placeholder="単語、意味、タグ" />
+            </label>
+          </div>
+          <div class="panel">
+            <h2>背景カラー</h2>
+            <div class="theme-grid">
+              <label>
+                カラー
+                <select id="background-color"></select>
+              </label>
+              <div id="bg-swatches" class="swatches"></div>
+            </div>
+          </div>
+          <div class="panel">
+            <h2>タグ</h2>
+            <div id="tag-list" class="tags"></div>
+          </div>
+          <div class="panel">
+            <h2>見る範囲</h2>
+            <div id="range-list" class="choice-grid"></div>
+          </div>
+          <div class="panel">
+            <h2>品詞</h2>
+            <div id="pos-list" class="choice-grid"></div>
+          </div>
+          <div class="panel">
+            <div class="form-grid">
+              <label>
+                並び順
+                <select id="sort-by">
+                  <option value="updated">最近更新</option>
+                  <option value="confidence">理解度が低い順</option>
+                  <option value="term">単語順</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div class="panel">
+            <h2>データ</h2>
+            <div class="data-grid">
+              <button id="export-csv" class="data-button" type="button">
+                CSV出力
+              </button>
+              <button id="import-csv" class="data-button" type="button">
+                CSV読込
+              </button>
+            </div>
+            <input id="csv-file" class="hidden" type="file" accept=".csv,text/csv" />
+          </div>
+        </aside>
+
+        <div class="content">
+          <section class="deck">
+            <div class="deck-toolbar">
+              <div class="section-title">
+                <h2>単語帳</h2>
+                <span id="deck-visible-count">0件</span>
+              </div>
+              <div class="deck-controls">
+                <button id="prev-card" class="deck-button" type="button" aria-label="前のカード">←</button>
+                <span id="deck-count" class="deck-count">0 / 0</span>
+                <button id="next-card" class="deck-button" type="button" aria-label="次のカード">→</button>
+                <button id="flip-card" class="deck-button" type="button">めくる</button>
+              </div>
+            </div>
+            <div id="deck-stage" class="deck-stage"></div>
+            <div class="deck-actions">
+              <button type="button" data-deck-confidence="1">1 まだ曖昧</button>
+              <button type="button" data-deck-confidence="2">2 復習</button>
+              <button type="button" data-deck-confidence="3">3 ふつう</button>
+              <button type="button" data-deck-confidence="4">4 OK</button>
+              <button type="button" data-deck-confidence="5">5 定着</button>
+            </div>
+          </section>
+
+          <section>
+            <div class="section-title">
+              <h2>単語リスト</h2>
+              <span id="visible-count">0件</span>
+            </div>
+            <div id="word-list" class="word-list"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const storageKey = "my-unknown-words-html";
+      const backgroundKey = "my-unknown-words-background";
+      const backgroundOptions = [
+        { id: "warm", name: "Warm paper", value: "#f4f0e8" },
+        { id: "white", name: "Clean white", value: "#f5f6f5" },
+        { id: "mint", name: "Soft mint", value: "#edf4ef" },
+        { id: "blue", name: "Pale blue", value: "#edf2f7" },
+        { id: "gray", name: "Calm gray", value: "#eef0ef" },
+      ];
+      const partOfSpeechOptions = [
+        "名詞",
+        "代名詞",
+        "自動詞",
+        "他動詞",
+        "形容詞",
+        "副詞",
+        "前置詞",
+        "接続詞",
+        "冠詞",
+      ];
+      const rangeOptions = [
+        { id: "review", name: "復習", test: (word) => word.confidence <= 2 },
+        { id: "normal", name: "ふつう", test: (word) => word.confidence === 3 },
+        { id: "learned", name: "理解済み", test: (word) => word.confidence >= 4 },
+      ];
+
+      const state = {
+        words: loadWords(),
+        editingId: null,
+        query: "",
+        activeTags: [],
+        activeRanges: [],
+        activePartsOfSpeech: [],
+        sortBy: "updated",
+        background: loadBackground(),
+        deckIndex: 0,
+        cardFlipped: false,
+      };
+
+      const els = {
+        form: document.querySelector("#word-form"),
+        formTitle: document.querySelector("#form-title"),
+        cancelEdit: document.querySelector("#cancel-edit"),
+        submitLabel: document.querySelector("#submit-label"),
+        term: document.querySelector("#term"),
+        meaning: document.querySelector("#meaning"),
+        partOfSpeech: document.querySelector("#part-of-speech"),
+        context: document.querySelector("#context"),
+        source: document.querySelector("#source"),
+        example: document.querySelector("#example"),
+        synonyms: document.querySelector("#synonyms"),
+        antonyms: document.querySelector("#antonyms"),
+        tags: document.querySelector("#tags"),
+        confidence: document.querySelector("#confidence"),
+        query: document.querySelector("#query"),
+        backgroundColor: document.querySelector("#background-color"),
+        bgSwatches: document.querySelector("#bg-swatches"),
+        sortBy: document.querySelector("#sort-by"),
+        tagList: document.querySelector("#tag-list"),
+        rangeList: document.querySelector("#range-list"),
+        posList: document.querySelector("#pos-list"),
+        deckStage: document.querySelector("#deck-stage"),
+        wordList: document.querySelector("#word-list"),
+        totalCount: document.querySelector("#total-count"),
+        reviewCount: document.querySelector("#review-count"),
+        learnedCount: document.querySelector("#learned-count"),
+        deckVisibleCount: document.querySelector("#deck-visible-count"),
+        deckCount: document.querySelector("#deck-count"),
+        prevCard: document.querySelector("#prev-card"),
+        nextCard: document.querySelector("#next-card"),
+        flipCard: document.querySelector("#flip-card"),
+        visibleCount: document.querySelector("#visible-count"),
+        exportCsv: document.querySelector("#export-csv"),
+        importCsv: document.querySelector("#import-csv"),
+        csvFile: document.querySelector("#csv-file"),
+      };
+
+      function loadWords() {
+        const stored = localStorage.getItem(storageKey);
+        if (!stored) return [];
+        const parsed = JSON.parse(stored);
+        const withoutOldSamples = parsed.filter(
+          (word) => !String(word.id || "").startsWith("sample-"),
+        );
+        if (withoutOldSamples.length !== parsed.length) {
+          localStorage.setItem(storageKey, JSON.stringify(withoutOldSamples));
+        }
+        return withoutOldSamples.map(normalizeWord);
+      }
+
+      function normalizeWord(word) {
+        return {
+          ...word,
+          partOfSpeech: word.partOfSpeech || "",
+          synonyms: Array.isArray(word.synonyms) ? word.synonyms : [],
+          antonyms: Array.isArray(word.antonyms) ? word.antonyms : [],
+          tags: Array.isArray(word.tags) ? word.tags : [],
+          confidence: Math.min(5, Math.max(1, Number(word.confidence) || 2)),
+        };
+      }
+
+      function loadBackground() {
+        const stored = localStorage.getItem(backgroundKey);
+        return backgroundOptions.some((option) => option.id === stored)
+          ? stored
+          : "warm";
+      }
+
+      function saveBackground() {
+        localStorage.setItem(backgroundKey, state.background);
+      }
+
+      function saveWords() {
+        localStorage.setItem(storageKey, JSON.stringify(state.words));
+      }
+
+      function makeId() {
+        return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      }
+
+      function parseTags(value) {
+        return value
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter(Boolean);
+      }
+
+      function parseList(value) {
+        return value
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean);
+      }
+
+      function formatDate(value) {
+        return new Intl.DateTimeFormat("ja-JP", {
+          month: "short",
+          day: "numeric",
+        }).format(new Date(value));
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      function csvEscape(value) {
+        return `"${String(value).replaceAll('"', '""')}"`;
+      }
+
+      function toCsv(words) {
+        const headers = [
+          "term",
+          "meaning",
+          "partOfSpeech",
+          "synonyms",
+          "antonyms",
+          "context",
+          "example",
+          "tags",
+          "confidence",
+          "source",
+          "createdAt",
+          "updatedAt",
+        ];
+        const rows = words.map((word) =>
+          [
+            word.term,
+            word.meaning,
+            word.partOfSpeech || "",
+            (word.synonyms || []).join("|"),
+            (word.antonyms || []).join("|"),
+            word.context,
+            word.example,
+            word.tags.join("|"),
+            String(word.confidence),
+            word.source,
+            word.createdAt,
+            word.updatedAt,
+          ]
+            .map(csvEscape)
+            .join(","),
+        );
+        return [headers.join(","), ...rows].join("\n");
+      }
+
+      function parseCsvLine(line) {
+        const values = [];
+        let current = "";
+        let quoted = false;
+        for (let index = 0; index < line.length; index += 1) {
+          const char = line[index];
+          const next = line[index + 1];
+          if (char === '"' && quoted && next === '"') {
+            current += '"';
+            index += 1;
+          } else if (char === '"') {
+            quoted = !quoted;
+          } else if (char === "," && !quoted) {
+            values.push(current);
+            current = "";
+          } else {
+            current += char;
+          }
+        }
+        values.push(current);
+        return values;
+      }
+
+      function importCsv(text) {
+        const lines = text.split(/\r?\n/).filter((line) => line.trim());
+        const headers = parseCsvLine(lines[0] || "");
+        const rows = lines.slice(1);
+        const now = new Date().toISOString();
+        const read = (row, key, fallbackIndex) => {
+          const index = headers.indexOf(key);
+          return row[index >= 0 ? index : fallbackIndex] || "";
+        };
+        return rows
+          .map(parseCsvLine)
+          .filter((row) => row[0])
+          .map((row) =>
+            normalizeWord({
+              id: makeId(),
+              term: read(row, "term", 0),
+              meaning: read(row, "meaning", 1),
+              partOfSpeech: read(row, "partOfSpeech", -1),
+              synonyms: read(row, "synonyms", -1).split("|").filter(Boolean),
+              antonyms: read(row, "antonyms", -1).split("|").filter(Boolean),
+              context: read(row, "context", 2),
+              example: read(row, "example", 3),
+              tags: read(row, "tags", 4).split("|").filter(Boolean),
+              confidence: Math.min(
+                5,
+                Math.max(1, Number(read(row, "confidence", 5)) || 2),
+              ),
+              source: read(row, "source", 6),
+              createdAt: read(row, "createdAt", 7) || now,
+              updatedAt: read(row, "updatedAt", 8) || now,
+            }),
+          );
+      }
+
+      function getTags() {
+        return [...new Set(state.words.flatMap((word) => word.tags))].sort();
+      }
+
+      function getFilteredWords() {
+        const normalizedQuery = state.query.trim().toLowerCase();
+        return [...state.words]
+          .filter((word) => {
+            const haystack = [
+              word.term,
+              word.meaning,
+              word.partOfSpeech,
+              word.synonyms.join(" "),
+              word.antonyms.join(" "),
+              word.context,
+              word.example,
+              word.source,
+              word.tags.join(" "),
+            ]
+              .join(" ")
+              .toLowerCase();
+            const matchesQuery =
+              !normalizedQuery || haystack.includes(normalizedQuery);
+            const matchesTag =
+              state.activeTags.length === 0 ||
+              state.activeTags.some((tag) => word.tags.includes(tag));
+            const matchesRange =
+              state.activeRanges.length === 0 ||
+              rangeOptions
+                .filter((range) => state.activeRanges.includes(range.id))
+                .some((range) => range.test(word));
+            const matchesPartOfSpeech =
+              state.activePartsOfSpeech.length === 0 ||
+              state.activePartsOfSpeech.includes(word.partOfSpeech);
+            return (
+              matchesQuery &&
+              matchesTag &&
+              matchesRange &&
+              matchesPartOfSpeech
+            );
+          })
+          .sort((a, b) => {
+            if (state.sortBy === "term") return a.term.localeCompare(b.term, "ja");
+            if (state.sortBy === "confidence") return a.confidence - b.confidence;
+            return new Date(b.updatedAt) - new Date(a.updatedAt);
+          });
+      }
+
+      function setConfidence(id, confidence) {
+        const now = new Date().toISOString();
+        state.words = state.words.map((word) =>
+          word.id === id ? { ...word, confidence, updatedAt: now } : word,
+        );
+        saveWords();
+        render();
+      }
+
+      function editWord(id) {
+        const word = state.words.find((item) => item.id === id);
+        if (!word) return;
+        state.editingId = id;
+        els.term.value = word.term;
+        els.meaning.value = word.meaning;
+        els.partOfSpeech.value = word.partOfSpeech || "";
+        els.context.value = word.context;
+        els.source.value = word.source;
+        els.example.value = word.example;
+        els.synonyms.value = word.synonyms.join(", ");
+        els.antonyms.value = word.antonyms.join(", ");
+        els.tags.value = word.tags.join(", ");
+        els.confidence.value = String(word.confidence);
+        els.formTitle.textContent = "単語を編集";
+        els.submitLabel.textContent = "更新";
+        els.cancelEdit.classList.remove("hidden");
+        els.term.focus();
+      }
+
+      function deleteWord(id) {
+        state.words = state.words.filter((word) => word.id !== id);
+        if (state.editingId === id) resetForm();
+        saveWords();
+        render();
+      }
+
+      function resetForm() {
+        state.editingId = null;
+        els.form.reset();
+        els.partOfSpeech.value = "";
+        els.confidence.value = "2";
+        els.formTitle.textContent = "単語を追加";
+        els.submitLabel.textContent = "追加";
+        els.cancelEdit.classList.add("hidden");
+      }
+
+      function renderTags() {
+        els.tagList.innerHTML = ["all", ...getTags()]
+          .map(
+            (tag) => `
+              <button class="tag ${tag === "all" ? (state.activeTags.length === 0 ? "active" : "") : state.activeTags.includes(tag) ? "active" : ""}" data-tag="${escapeHtml(tag)}" type="button">
+                ${tag === "all" ? "すべて" : escapeHtml(tag)}
+              </button>
+            `,
+          )
+          .join("");
+      }
+
+      function renderRanges() {
+        els.rangeList.innerHTML = [
+          `<button class="choice ${state.activeRanges.length === 0 ? "active" : ""}" data-range="all" type="button">すべて</button>`,
+          ...rangeOptions.map(
+            (range) =>
+              `<button class="choice ${state.activeRanges.includes(range.id) ? "active" : ""}" data-range="${range.id}" type="button">${escapeHtml(range.name)}</button>`,
+          ),
+        ].join("");
+      }
+
+      function renderPartsOfSpeech() {
+        els.posList.innerHTML = [
+          `<button class="choice ${state.activePartsOfSpeech.length === 0 ? "active" : ""}" data-pos="all" type="button">すべて</button>`,
+          ...partOfSpeechOptions.map(
+            (part) =>
+              `<button class="choice ${state.activePartsOfSpeech.includes(part) ? "active" : ""}" data-pos="${escapeHtml(part)}" type="button">${escapeHtml(part)}</button>`,
+          ),
+        ].join("");
+      }
+
+      function renderBackground() {
+        const active =
+          backgroundOptions.find((option) => option.id === state.background) ||
+          backgroundOptions[0];
+
+        document.documentElement.style.setProperty("--bg", active.value);
+        els.backgroundColor.innerHTML = backgroundOptions
+          .map(
+            (option) =>
+              `<option value="${option.id}">${escapeHtml(option.name)}</option>`,
+          )
+          .join("");
+        els.backgroundColor.value = active.id;
+        els.bgSwatches.innerHTML = backgroundOptions
+          .map(
+            (option) => `
+              <button
+                class="swatch ${option.id === active.id ? "active" : ""}"
+                style="--swatch: ${option.value}"
+                type="button"
+                data-background="${option.id}"
+                aria-label="背景を${escapeHtml(option.name)}にする"
+              ></button>
+            `,
+          )
+          .join("");
+      }
+
+      function getDeckWords() {
+        return getFilteredWords();
+      }
+
+      function getCurrentDeckWord() {
+        const words = getDeckWords();
+        if (state.deckIndex >= words.length) {
+          state.deckIndex = Math.max(0, words.length - 1);
+        }
+        return words[state.deckIndex];
+      }
+
+      function renderDeck() {
+        const words = getDeckWords();
+        if (state.deckIndex >= words.length) {
+          state.deckIndex = Math.max(0, words.length - 1);
+        }
+
+        const current = words[state.deckIndex];
+        els.deckVisibleCount.textContent = `${words.length}件`;
+        els.deckCount.textContent = words.length
+          ? `${state.deckIndex + 1} / ${words.length}`
+          : "0 / 0";
+        els.prevCard.disabled = words.length <= 1;
+        els.nextCard.disabled = words.length <= 1;
+        els.flipCard.disabled = words.length === 0;
+
+        if (!current) {
+          els.deckStage.innerHTML =
+            `<div class="deck-empty">まだカードがありません。左のフォームから単語を追加してください。</div>`;
+          return;
+        }
+
+        els.deckStage.innerHTML = `
+          <button class="flash-card ${state.cardFlipped ? "flipped" : ""}" type="button" data-card-flip="true" aria-label="カードをめくる">
+            <div class="flash-inner">
+              <div class="flash-face front">
+                <div>
+                  <span class="card-kicker">FRONT / 単語</span>
+                  <h3 class="card-term">${escapeHtml(current.term)}</h3>
+                  ${
+                    current.partOfSpeech
+                      ? `<span class="badge">${escapeHtml(current.partOfSpeech)}</span>`
+                      : ""
+                  }
+                </div>
+                <div class="card-footer">
+                  <div class="card-tags">
+                    ${current.tags
+                      .map(
+                        (tag) =>
+                          `<span class="tag">${escapeHtml(tag)}</span>`,
+                      )
+                      .join("")}
+                  </div>
+                  <span class="flip-hint">クリックで裏へ</span>
+                </div>
+              </div>
+              <div class="flash-face back">
+                <div>
+                  <span class="card-kicker">BACK / 意味</span>
+                  <p class="card-meaning">${escapeHtml(current.meaning)}</p>
+                  <div class="card-detail">
+                    ${
+                      current.partOfSpeech
+                        ? `<p><strong>品詞: </strong>${escapeHtml(current.partOfSpeech)}</p>`
+                        : ""
+                    }
+                    ${
+                      current.context
+                        ? `<p><strong>場面: </strong>${escapeHtml(current.context)}</p>`
+                        : ""
+                    }
+                    ${
+                      current.example
+                        ? `<p><strong>例文: </strong>${escapeHtml(current.example)}</p>`
+                        : ""
+                    }
+                    ${
+                      current.source
+                        ? `<p><strong>出典: </strong>${escapeHtml(current.source)}</p>`
+                        : ""
+                    }
+                  </div>
+                  ${
+                    current.synonyms.length || current.antonyms.length
+                      ? `<div class="word-relations">
+                          ${
+                            current.synonyms.length
+                              ? `<div class="relation-box"><strong>同義語</strong>${escapeHtml(current.synonyms.join(", "))}</div>`
+                              : ""
+                          }
+                          ${
+                            current.antonyms.length
+                              ? `<div class="relation-box"><strong>対義語</strong>${escapeHtml(current.antonyms.join(", "))}</div>`
+                              : ""
+                          }
+                        </div>`
+                      : ""
+                  }
+                </div>
+                <div class="card-footer">
+                  <span class="badge">理解度 ${current.confidence}</span>
+                  <span class="flip-hint">クリックで表へ</span>
+                </div>
+              </div>
+            </div>
+          </button>
+        `;
+      }
+
+      function renderWords() {
+        const words = getFilteredWords();
+        els.visibleCount.textContent = `${words.length}件`;
+        els.wordList.innerHTML = words.length
+          ? words
+              .map(
+                (word) => `
+                  <article class="word">
+                    <div class="word-top">
+                      <div>
+                        <div class="word-title">
+                          <h3>${escapeHtml(word.term)}</h3>
+                          ${
+                            word.partOfSpeech
+                              ? `<span class="badge">${escapeHtml(word.partOfSpeech)}</span>`
+                              : ""
+                          }
+                          <span class="badge">理解度 ${word.confidence}</span>
+                          <span class="date">${formatDate(word.updatedAt)}</span>
+                        </div>
+                        <p>${escapeHtml(word.meaning)}</p>
+                      </div>
+                      <div class="actions">
+                        <button class="ghost" type="button" data-edit="${word.id}">編集</button>
+                        <button class="ghost danger" type="button" data-delete="${word.id}">削除</button>
+                      </div>
+                    </div>
+                    <div class="meta">
+                      ${
+                        word.partOfSpeech
+                          ? `<p><strong>品詞: </strong>${escapeHtml(word.partOfSpeech)}</p>`
+                          : ""
+                      }
+                      ${
+                        word.context
+                          ? `<p><strong>場面: </strong>${escapeHtml(word.context)}</p>`
+                          : ""
+                      }
+                      ${
+                        word.example
+                          ? `<p><strong>例文: </strong>${escapeHtml(word.example)}</p>`
+                          : ""
+                      }
+                      ${
+                        word.source
+                          ? `<p><strong>出典: </strong>${escapeHtml(word.source)}</p>`
+                          : ""
+                      }
+                    </div>
+                    ${
+                      word.synonyms.length || word.antonyms.length
+                        ? `<div class="word-relations">
+                            ${
+                              word.synonyms.length
+                                ? `<div class="relation-box"><strong>同義語</strong>${escapeHtml(word.synonyms.join(", "))}</div>`
+                                : ""
+                            }
+                            ${
+                              word.antonyms.length
+                                ? `<div class="relation-box"><strong>対義語</strong>${escapeHtml(word.antonyms.join(", "))}</div>`
+                                : ""
+                            }
+                          </div>`
+                        : ""
+                    }
+                    <div class="word-foot">
+                      ${word.tags
+                        .map(
+                          (tag) =>
+                            `<button class="tag" type="button" data-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</button>`,
+                        )
+                        .join("")}
+                      <div class="levels">
+                        ${[1, 2, 3, 4, 5]
+                          .map(
+                            (level) => `
+                              <button
+                                class="level ${word.confidence === level ? "active" : ""}"
+                                type="button"
+                                data-confidence="${level}"
+                                data-id="${word.id}"
+                                aria-label="${escapeHtml(word.term)}の理解度を${level}にする"
+                              >${level}</button>
+                            `,
+                          )
+                          .join("")}
+                      </div>
+                    </div>
+                  </article>
+                `,
+              )
+              .join("")
+          : state.words.length === 0
+            ? `<p class="empty">まだ単語がありません。上のフォームから追加してください。</p>`
+            : `<p class="empty">一致する単語はありません。</p>`;
+      }
+
+      function renderStats() {
+        els.totalCount.textContent = state.words.length;
+        els.reviewCount.textContent = state.words.filter(
+          (word) => word.confidence <= 2,
+        ).length;
+        els.learnedCount.textContent = state.words.filter(
+          (word) => word.confidence >= 4,
+        ).length;
+      }
+
+      function render() {
+        renderBackground();
+        renderStats();
+        renderTags();
+        renderRanges();
+        renderPartsOfSpeech();
+        renderDeck();
+        renderWords();
+      }
+
+      els.form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const term = els.term.value.trim();
+        const meaning = els.meaning.value.trim();
+        if (!term || !meaning) return;
+        const now = new Date().toISOString();
+        const existing = state.words.find((word) => word.id === state.editingId);
+        const nextWord = {
+          id: state.editingId || makeId(),
+          term,
+          meaning,
+          partOfSpeech: els.partOfSpeech.value,
+          context: els.context.value.trim(),
+          source: els.source.value.trim(),
+          example: els.example.value.trim(),
+          synonyms: parseList(els.synonyms.value),
+          antonyms: parseList(els.antonyms.value),
+          tags: parseTags(els.tags.value),
+          confidence: Number(els.confidence.value),
+          createdAt: existing?.createdAt || now,
+          updatedAt: now,
+        };
+        state.words = state.editingId
+          ? state.words.map((word) =>
+              word.id === state.editingId ? nextWord : word,
+            )
+          : [nextWord, ...state.words];
+        state.deckIndex = 0;
+        state.cardFlipped = false;
+        resetForm();
+        saveWords();
+        render();
+      });
+
+      els.cancelEdit.addEventListener("click", resetForm);
+      els.query.addEventListener("input", (event) => {
+        state.query = event.target.value;
+        state.deckIndex = 0;
+        state.cardFlipped = false;
+        render();
+      });
+      els.backgroundColor.addEventListener("change", (event) => {
+        state.background = event.target.value;
+        saveBackground();
+        renderBackground();
+      });
+      els.sortBy.addEventListener("change", (event) => {
+        state.sortBy = event.target.value;
+        state.deckIndex = 0;
+        state.cardFlipped = false;
+        render();
+      });
+      els.prevCard.addEventListener("click", () => {
+        const words = getDeckWords();
+        if (words.length <= 1) return;
+        state.deckIndex = (state.deckIndex - 1 + words.length) % words.length;
+        state.cardFlipped = false;
+        renderDeck();
+      });
+      els.nextCard.addEventListener("click", () => {
+        const words = getDeckWords();
+        if (words.length <= 1) return;
+        state.deckIndex = (state.deckIndex + 1) % words.length;
+        state.cardFlipped = false;
+        renderDeck();
+      });
+      els.flipCard.addEventListener("click", () => {
+        if (!getCurrentDeckWord()) return;
+        state.cardFlipped = !state.cardFlipped;
+        renderDeck();
+      });
+      document.addEventListener("click", (event) => {
+        const target = event.target.closest("button");
+        if (!target) return;
+        if (target.dataset.tag) {
+          const tag = target.dataset.tag;
+          state.activeTags =
+            tag === "all"
+              ? []
+              : state.activeTags.includes(tag)
+                ? state.activeTags.filter((item) => item !== tag)
+                : [...state.activeTags, tag];
+          state.deckIndex = 0;
+          state.cardFlipped = false;
+          render();
+        }
+        if (target.dataset.range) {
+          const range = target.dataset.range;
+          state.activeRanges =
+            range === "all"
+              ? []
+              : state.activeRanges.includes(range)
+                ? state.activeRanges.filter((item) => item !== range)
+                : [...state.activeRanges, range];
+          state.deckIndex = 0;
+          state.cardFlipped = false;
+          render();
+        }
+        if (target.dataset.pos) {
+          const part = target.dataset.pos;
+          state.activePartsOfSpeech =
+            part === "all"
+              ? []
+              : state.activePartsOfSpeech.includes(part)
+                ? state.activePartsOfSpeech.filter((item) => item !== part)
+                : [...state.activePartsOfSpeech, part];
+          state.deckIndex = 0;
+          state.cardFlipped = false;
+          render();
+        }
+        if (target.dataset.background) {
+          state.background = target.dataset.background;
+          saveBackground();
+          renderBackground();
+        }
+        if (target.dataset.cardFlip) {
+          state.cardFlipped = !state.cardFlipped;
+          renderDeck();
+        }
+        if (target.dataset.deckConfidence) {
+          const current = getCurrentDeckWord();
+          if (current) setConfidence(current.id, Number(target.dataset.deckConfidence));
+        }
+        if (target.dataset.confidence && target.dataset.id) {
+          setConfidence(target.dataset.id, Number(target.dataset.confidence));
+        }
+        if (target.dataset.edit) editWord(target.dataset.edit);
+        if (target.dataset.delete) deleteWord(target.dataset.delete);
+      });
+      els.exportCsv.addEventListener("click", () => {
+        const blob = new Blob([toCsv(state.words)], {
+          type: "text/csv;charset=utf-8",
+        });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `my-words-${new Date().toISOString().slice(0, 10)}.csv`;
+        link.click();
+        URL.revokeObjectURL(url);
+      });
+      els.importCsv.addEventListener("click", () => els.csvFile.click());
+      els.csvFile.addEventListener("change", async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        state.words = [...importCsv(await file.text()), ...state.words];
+        event.target.value = "";
+        saveWords();
+        render();
+      });
+
+      render();
+    </script>
   </body>
 </html>
