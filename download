@@ -1,6 +1,5 @@
-.DS_Store
-Thumbs.db
-desktop.ini
-*.log
-*.tmp
-*.bak
+{
+  "projects": {
+    "default": "q-path"
+  }
+}
